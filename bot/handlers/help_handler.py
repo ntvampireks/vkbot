@@ -4,6 +4,8 @@ from bot.handlers.base_handler import BaseHandler
 
 
 class HelpHandler(BaseHandler):
+    """Обработчик запросов помощи."""
+
     @property
     def intent(self) -> str:
         return 'help'

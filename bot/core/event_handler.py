@@ -4,6 +4,7 @@ import time
 from bot.domains.message import Message
 from bot.utils.deduplication import MessageDeduplicator
 from bot.utils.logger import setup_logger
+from bot.config import get_settings
 
 logger = setup_logger(__name__, level="DEBUG")
 
@@ -11,7 +12,11 @@ logger = setup_logger(__name__, level="DEBUG")
 class EventHandler:
     def __init__(self, on_message_callback, bot_user_id: int | None = None):
         self.on_message = on_message_callback
-        self.deduplicator = MessageDeduplicator()
+        settings = get_settings()
+        self.deduplicator = MessageDeduplicator(
+            max_size=settings.dedup_max_size,
+            ttl_seconds=settings.dedup_ttl_seconds
+        )
         self.bot_user_id = bot_user_id
 
     def handle_event(self, event):

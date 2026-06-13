@@ -2,8 +2,11 @@ import vk_api
 from vk_api.longpoll import VkLongPoll, VkEventType
 from typing import Callable
 import random
-from bot.config import Config
+import time
+from bot.config import get_settings
 from bot.utils.logger import setup_logger
+
+settings = get_settings()
 
 logger = setup_logger(__name__)
 
@@ -11,30 +14,41 @@ logger = setup_logger(__name__)
 class VKClient:
     def __init__(self):
         self.vk_session = vk_api.VkApi(
-            token=Config.VK_GROUP_TOKEN
+            token=settings.vk_group_token
         )
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
+        self._running = False
 
-    def send_message(self, peer_id: int, text: str):
+    def send_message(self, peer_id: int, text: str, reply_to: int | None = None):
         if len(text) > 4096:
             text = text[:4093] + '...'
         try:
-            self.vk.messages.send(
-                peer_id=peer_id,
-                message=text,
-                random_id=random.randint(0, 2**31 - 1)
-            )
-            logger.info(f'Сообщение отправлено в peer_id={peer_id}')
+            params = {
+                'peer_id': peer_id,
+                'message': text,
+                'random_id': random.randint(0, 2**31 - 1),
+            }
+            if reply_to is not None:
+                params['reply_to'] = reply_to
+
+            self.vk.messages.send(**params)
+
+            logger.info(f'Сообщение отправлено в peer_id={peer_id}, reply_to={reply_to}')
         except Exception as e:
             logger.error(f'Ошибка отправки сообщения: {e}')
             raise
 
     def run_forever(self, on_message: Callable):
-        while True:
+        """Запускает LongPoll с экспоненциальным backoff при ошибках."""
+        self._running = True
+        max_reconnect_delay = 60  # Максимальная задержка 60 секунд
+        base_delay = 1  # Базовая задержка 1 секунда
+        reconnect_attempts = 0
+
+        while self._running:
             try:
                 for event in self.longpoll.check():
-                    # event может быть объектом или dict — определяем тип
                     event_type = event.type if hasattr(event, 'type') else event.get("type")
 
                     if event_type == VkEventType.MESSAGE_NEW:
@@ -57,6 +71,20 @@ class VKClient:
                             "out": out
                         }
                         on_message(message_struct)
+
+                # Успешная проверка — сбрасываем счетчик попыток
+                reconnect_attempts = 0
+
             except Exception as e:
                 logger.error(f'Ошибка LongPoll: {e}')
-                continue
+
+                # Экспоненциальный backoff
+                reconnect_attempts += 1
+                delay = min(base_delay * (2 ** (reconnect_attempts - 1)), max_reconnect_delay)
+                logger.info(f'Повторная попытка подключения через {delay:.1f}с (попытка {reconnect_attempts})')
+                time.sleep(delay)
+
+    def stop(self):
+        """Останавливает LongPoll."""
+        logger.info('Остановка VK клиента...')
+        self._running = False

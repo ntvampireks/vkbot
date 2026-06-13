@@ -11,6 +11,7 @@ class MessageDeduplicator:
 
     def __init__(self, max_size: int = 1000, ttl_seconds: int = 300):
         self._cache = OrderedDict()
+        self._max_size = max_size
         self._ttl = ttl_seconds
         self._lock = Lock()
 
@@ -26,6 +27,12 @@ class MessageDeduplicator:
                     self._cache.popitem(last=False)
                 else:
                     break
+
+            # Удаляем старые записи, если кэш превышает max_size
+            while len(self._cache) >= self._max_size:
+                oldest_id, _ = next(iter(self._cache.items()))
+                self._cache.pop(oldest_id)
+                logger.debug(f'Кэш полон, удаляем oldest_id={oldest_id}')
 
             # Проверяем, есть ли message_id в кэше
             if message_id in self._cache:

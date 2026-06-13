@@ -4,6 +4,8 @@ from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
 
+import bot.config as config
+
 
 DB_PATH = Path(__file__).parent / 'dialogs.db'
 
@@ -79,17 +81,21 @@ def add_message(user_id: int, role: str, text: str):
             INSERT INTO messages (user_id, role, text, timestamp)
             VALUES (?, ?, ?, ?)
         ''', (user_id, role, text, timestamp))
-        # Удаляем старые сообщения, оставляем только последние 10
-        conn.execute('''
-            DELETE FROM messages
-            WHERE id NOT IN (
-                SELECT id FROM messages
-                WHERE user_id = ?
-                ORDER BY timestamp DESC
-                LIMIT 10
+        # Удаляем старые сообщения, оставляем только последние MAX_HISTORY_MESSAGES
+        max_messages = config.get_settings().max_history_messages
+        cursor = conn.execute(
+            'SELECT id FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+            (user_id, max_messages)
+        )
+        kept_ids = [row['id'] for row in cursor.fetchall()]
+        if kept_ids:
+            placeholders = ','.join('?' * len(kept_ids))
+            conn.execute(
+                f'DELETE FROM messages WHERE user_id = ? AND id NOT IN ({placeholders})',
+                (user_id, *kept_ids)
             )
-            AND user_id = ?
-        ''', (user_id, user_id))
+        else:
+            conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
         conn.commit()
 
 

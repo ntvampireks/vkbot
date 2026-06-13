@@ -6,6 +6,9 @@ __pycache__/
 # C extensions
 *.so
 
+# macOS
+.DS_Store
+.idea
 # Distribution / packaging
 .Python
 build/
@@ -216,3 +219,4 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+*.db

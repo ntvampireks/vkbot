@@ -4,6 +4,8 @@ from bot.handlers.base_handler import BaseHandler
 
 
 class DefaultHandler(BaseHandler):
+    """Обработчик неизвестных запросов."""
+
     @property
     def intent(self) -> str:
         return 'unknown'

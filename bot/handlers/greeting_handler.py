@@ -4,6 +4,8 @@ from bot.handlers.base_handler import BaseHandler
 
 
 class GreetingHandler(BaseHandler):
+    """Обработчик приветствий."""
+
     @property
     def intent(self) -> str:
         return 'greeting'

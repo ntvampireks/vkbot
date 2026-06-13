@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from bot.domains.dialog import Dialog
-from bot.config import Config
+from bot.config import get_settings
 from bot.utils.logger import setup_logger
 import storage.db as db
 
@@ -10,7 +10,9 @@ logger = setup_logger(__name__)
 
 class DialogService:
     def __init__(self):
-        self.timeout_hours = Config.DIALOG_TIMEOUT_HOURS
+        settings = get_settings()
+        self.timeout_hours = settings.dialog_timeout_hours
+        self.max_history_messages = settings.max_history_messages
 
     def get_dialog(self, user_id: int) -> Dialog | None:
         data = db.get_dialog(user_id)
@@ -22,7 +24,8 @@ class DialogService:
             last_active=data['last_active'],
             state=data['state'],
             context=data['context'],
-            history=db.get_messages(user_id)
+            history=db.get_messages(user_id),
+            max_history_messages=self.max_history_messages
         )
 
     def save_dialog(self, dialog: Dialog):

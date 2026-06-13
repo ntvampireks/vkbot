@@ -9,6 +9,7 @@ class Dialog:
     state: str | None = None
     context: dict = field(default_factory=dict)
     history: list = field(default_factory=list)
+    max_history_messages: int = 10
 
     def is_active(self, timeout_hours: int) -> bool:
         """Проверка, активна ли сессия диалога."""
@@ -22,6 +23,5 @@ class Dialog:
             'text': text,
             'timestamp': datetime.now().isoformat()
         })
-        # Ограничиваем историю последними 10 сообщениями
-        if len(self.history) > 10:
-            self.history = self.history[-10:]
+        if len(self.history) > self.max_history_messages:
+            self.history = self.history[-self.max_history_messages:]
