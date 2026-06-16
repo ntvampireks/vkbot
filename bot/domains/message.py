@@ -14,6 +14,9 @@ class Message:
 
     @classmethod
     def from_vk_event(cls, event_data: dict) -> 'Message':
+        if not event_data or not isinstance(event_data, dict):
+            raise ValueError(f"Invalid event data: expected dict, got {type(event_data).__name__}")
+
         message_data = event_data
 
         # timestamp может быть int (Unix timestamp) или datetime

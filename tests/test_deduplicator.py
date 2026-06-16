@@ -46,14 +46,14 @@ class TestMessageDeduplicator:
         assert dedup.is_duplicate(123) is False
 
     def test_cache_grows_with_new_messages(self):
-        """Кэш растёт с новыми сообщениями (max_size не реализован)."""
+        """Кэш ограничивается max_size при новых сообщениях."""
         dedup = MessageDeduplicator(max_size=5, ttl_seconds=300)
 
         for i in range(10):
             dedup.is_duplicate(i)
 
-        # Кэш растёт — max_size eviction не реализован в текущей версии
-        assert len(dedup._cache) == 10
+        # Кэш ограничен до max_size=5 (старые записи удаляются)
+        assert len(dedup._cache) == 5
 
     def test_concurrent_access(self):
         """Потокобезопасность Deduplicator."""

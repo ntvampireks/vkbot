@@ -1,7 +1,7 @@
 """Метрики для мониторинга бота."""
 import time
 import threading
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 from dataclasses import dataclass, field
 
 
@@ -99,7 +99,7 @@ class MetricsCollector:
         """Время работы бота в секундах."""
         return time.time() - self._start_time
 
-    def get_all_metrics(self) -> Dict[str, any]:
+    def get_all_metrics(self) -> Dict[str, Any]:
         """Получить все метрики."""
         with self._lock:
             return {

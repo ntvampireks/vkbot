@@ -16,6 +16,7 @@
 - **Метрики** — сбор статистики в формате Prometheus
 - **Ретраи при ошибках** — автоматическая повторная попытка отправки сообщений
 - **Ротация логов** — автоматическое управление файлами логов
+- **Фоновая очередь отправки** — неблокирующая отправка сообщений
 
 ## Быстрый старт
 
@@ -92,6 +93,21 @@ DEDUP_TTL_SECONDS=300
 
 # Опционально: путь к каталогу логов
 LOG_DIR=logs
+
+# Опционально: уровень логирования
+LOG_LEVEL=DEBUG
+
+# Опционально: задержка перед отправкой сообщения (секунды)
+MESSAGE_SEND_DELAY=0.5
+
+# Опционально: задержка между попытками повторной отправки (секунды)
+MESSAGE_RETRY_DELAY=1.0
+
+# Опционально: максимальная длина сообщения
+MAX_MESSAGE_LENGTH=10000
+
+# Опционально: защита от prompt injection
+ENABLE_PROMPT_INJECTION_PROTECTION=true
 ```
 
 **Как узнать ID сообщества:**
@@ -130,7 +146,7 @@ VK LongPoll → EventHandler → on_message() → IntentClassifier
 | `EventHandler` | Обработка входящих событий, преобразует в `Message` объекты, дедупликация сообщений |
 | `DialogService` | Управление контекстом диалогов, сохраняет в SQLite |
 | `IntentClassifier` | Классификация намерений по ключевым словам, проверка упоминаний |
-| `MessageService` | Отправка сообщений с rate limiting (3 сообщения/сек), retry при ошибках |
+| `MessageService` | Отправка сообщений через фоновую очередь с rate limiting и retry |
 | `Handlers` | Обработчики для разных типов диалогов (автоматическая регистрация) |
 | `MetricsCollector` | Сбор метрик (счётчики, гистограммы) для мониторинга |
 | `Health Server` | FastAPI сервер для health-check (/health, /ready, /metrics) |
@@ -143,7 +159,7 @@ VK LongPoll → EventHandler → on_message() → IntentClassifier
 4. **IntentClassifier.classify()** — определяет тип запроса по ключевым словам
 5. **Router** — выбирает обработчик по intent
 6. **Handler.handle()** — генерирует ответ
-7. **MessageService.send()** — отправляет ответ через VK API
+7. **MessageService.send()** — отправляет ответ через фоновую очередь
 
 ---
 
@@ -171,19 +187,7 @@ class CustomHandler(BaseHandler):
         return 'Ответ вашего обработчика'
 ```
 
-2. Зарегистрируйте в `bot/main.py`:
-
-```python
-from bot.handlers import CustomHandler
-
-def create_router():
-    return {
-        'greeting': GreetingHandler(),
-        'help': HelpHandler(),
-        'custom': CustomHandler(),  # ← добавьте
-        'unknown': DefaultHandler(),
-    }
-```
+2. Новый обработчик автоматически зарегистрируется при запуске бота
 
 3. Добавьте ключевые слова в `IntentClassifier`:
 
@@ -236,7 +240,7 @@ vk-bot/
 │   │   └── dialog.py           # Модель диалога
 │   ├── services/               # Бизнес-логика
 │   │   ├── dialog_service.py   # Управление диалогами
-│   │   ├── message_service.py  # Отправка сообщений с retry
+│   │   ├── message_service.py  # Отправка сообщений через фоновую очередь
 │   │   ├── intent_classifier.py# Классификация намерений
 │   │   └── rate_limiter.py     # Ограничение скорости
 │   ├── handlers/               # Обработчики диалогов
@@ -244,9 +248,15 @@ vk-bot/
 │   │   ├── greeting_handler.py # Приветствие
 │   │   ├── help_handler.py     # Справка
 │   │   └── default_handler.py  # Ответ на неизвестные запросы
+│   ├── orchestration/          # Модули оркестрации
+│   │   ├── router.py           # Автоматическая регистрация хендлеров
+│   │   └── message_processor.py# Логика обработки сообщений
+│   ├── lifecycle/              # Управление жизненным циклом
+│   │   └── shutdown.py         # Graceful shutdown, health-check сервер
 │   └── utils/                  # Утилиты
-│       ├── logger.py           # Настройка логирования с ротацией
+│       ├── app_logger.py       # Настройка логирования с ротацией
 │       ├── deduplication.py    # Дедупликация сообщений
+│       ├── message_validator.py# Валидация и санитизация сообщений
 │       └── metrics.py          # Сбор метрик (Prometheus)
 ├── storage/                    # SQLite база данных
 │   └── db.py                   # Работа с БД
@@ -292,6 +302,13 @@ vk-bot/
 - `GET /metrics` — метрики в формате Prometheus
 
 По умолчанию сервер запущен на `http://localhost:8000`.
+
+### Что такое фоновая очередь отправки сообщений?
+
+Фоновая очередь позволяет отправлять сообщения без блокировки основного потока обработки. Сообщения помещаются в очередь `Queue`, а отдельный поток обрабатывает их с retry и rate limiting. Это обеспечивает:
+- Неблокирующую обработку входящих сообщений
+- Параллельную отправку нескольким пользователям
+- Graceful shutdown с ожиданием обработки очереди
 
 ### Что делать, если бот не получает сообщения?
 

@@ -1,9 +1,9 @@
 from collections import OrderedDict
 from threading import Lock
-from bot.utils.logger import setup_logger
+from bot.utils.app_logger import get_logger
 import time
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class MessageDeduplicator:

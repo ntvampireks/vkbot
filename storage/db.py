@@ -89,11 +89,12 @@ def add_message(user_id: int, role: str, text: str):
         )
         kept_ids = [row['id'] for row in cursor.fetchall()]
         if kept_ids:
-            placeholders = ','.join('?' * len(kept_ids))
-            conn.execute(
-                f'DELETE FROM messages WHERE user_id = ? AND id NOT IN ({placeholders})',
-                (user_id, *kept_ids)
-            )
+            # Используем параметризованный запрос с ? для каждого ID
+            placeholders = ','.join(['?'] * len(kept_ids))
+            query = 'DELETE FROM messages WHERE user_id = ? AND id NOT IN (' + placeholders + ')'
+            # Параметры передаются как кортеж: user_id + список kept_ids
+            params = (user_id, *kept_ids)
+            conn.execute(query, params)
         else:
             conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
         conn.commit()

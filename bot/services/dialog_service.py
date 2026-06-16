@@ -2,10 +2,10 @@ from datetime import datetime
 
 from bot.domains.dialog import Dialog
 from bot.config import get_settings
-from bot.utils.logger import setup_logger
+from bot.utils.app_logger import get_logger
 import storage.db as db
 
-logger = setup_logger(__name__)
+logger = get_logger(__name__)
 
 
 class DialogService:
@@ -31,7 +31,7 @@ class DialogService:
     def save_dialog(self, dialog: Dialog):
         db.save_dialog(
             user_id=dialog.user_id,
-            last_active=datetime.now(),
+            last_active=dialog.last_active,
             state=dialog.state,
             context=dialog.context
         )
