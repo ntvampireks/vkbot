@@ -1,25 +1,108 @@
+import threading
+from collections import OrderedDict
 from datetime import datetime
+from time import time
+from typing import Dict, Tuple
+import logging
 
 from bot.domains.dialog import Dialog
-from bot.config import get_settings
-from bot.utils.app_logger import get_logger
+from bot.config import Settings
+from bot.utils.inject import get_default_logger
 import storage.db as db
 
-logger = get_logger(__name__)
+# Тип для кэша: user_id -> (Dialog, last_used_timestamp)
+DialogCacheEntry = Tuple[Dialog, float]
 
 
 class DialogService:
-    def __init__(self):
-        settings = get_settings()
-        self.timeout_hours = settings.dialog_timeout_hours
-        self.max_history_messages = settings.max_history_messages
+    """Сервис управления диалогами с LRU-кэшированием.
+
+    Управляет контекстом диалогов пользователей, сохраняет историю сообщений
+    в SQLite и поддерживает кэш активных диалогов в памяти.
+    """
+
+    def __init__(self, settings: Settings, logger: logging.Logger):
+        """Инициализирует сервис диалогов.
+
+        Args:
+            settings: Конфигурация бота
+            logger: Логгер
+        """
+        self._settings = settings
+        self._logger = logger
+        self.timeout_hours = self._settings.dialog_timeout_hours
+        self.max_history_messages = self._settings.max_history_messages
+        self.max_dialogs_cache = self._settings.max_dialogs_cache
+
+        # OrderedDict для LRU-кэша: user_id -> (Dialog, last_used_timestamp)
+        self._dialogs: OrderedDict[int, DialogCacheEntry] = OrderedDict()
+        self._lock = threading.Lock()
+
+    def _cleanup_old_dialogs(self) -> int:
+        """Удаляет неактивные диалоги старше timeout_hours.
+
+        Returns:
+            Количество удалённых диалогов
+        """
+        now = time()
+        timeout_seconds = self.timeout_hours * 3600
+        removed = 0
+
+        # Проходим с начала (старые записи в OrderedDict)
+        for user_id, (_, last_used) in list(self._dialogs.items()):
+            if now - last_used > timeout_seconds:
+                del self._dialogs[user_id]
+                removed += 1
+
+        if removed > 0:
+            self._logger.debug(f'Очищено {removed} неактивных диалогов (timeout: {self.timeout_hours}ч)')
+
+        return removed
+
+    def _trim_to_max_size(self) -> int:
+        """Удаляет наименее используемые диалоги при превышении лимита.
+
+        Returns:
+            Количество удалённых диалогов
+        """
+        removed = 0
+
+        while len(self._dialogs) > self.max_dialogs_cache:
+            # popitem(last=False) удаляет oldest (первую запись)
+            user_id, _ = self._dialogs.popitem(last=False)
+            removed += 1
+            self._logger.debug(f'Удалён диалог {user_id} из кэша (лимит: {self.max_dialogs_cache})')
+
+        if removed > 0:
+            self._logger.debug(f'Подстриг кэш до {self.max_dialogs_cache}: удалено {removed} диалогов')
+
+        return removed
 
     def get_dialog(self, user_id: int) -> Dialog | None:
+        """Получает диалог пользователя.
+
+        Сначала проверяет кэш, при отсутствии загружает из БД.
+
+        Args:
+            user_id: ID пользователя
+
+        Returns:
+            Диалог пользователя или None если не найден
+        """
+        with self._lock:
+            if user_id in self._dialogs:
+                # Обновляем last_used и перемещаем в конец (активный)
+                dialog, _ = self._dialogs[user_id]
+                self._dialogs[user_id] = (dialog, time())
+                self._dialogs.move_to_end(user_id)
+                return dialog
+
+        # Чтение из БД вне блокировки
         data = db.get_dialog(user_id)
         if not data:
             return None
 
-        return Dialog(
+        dialog = Dialog(
             user_id=data['user_id'],
             last_active=data['last_active'],
             state=data['state'],
@@ -28,7 +111,18 @@ class DialogService:
             max_history_messages=self.max_history_messages
         )
 
+        with self._lock:
+            self._dialogs[user_id] = (dialog, time())
+            self._trim_to_max_size()
+
+        return dialog
+
     def save_dialog(self, dialog: Dialog):
+        """Сохраняет диалог в БД.
+
+        Args:
+            dialog: Диалог для сохранения
+        """
         db.save_dialog(
             user_id=dialog.user_id,
             last_active=dialog.last_active,
@@ -36,8 +130,31 @@ class DialogService:
             context=dialog.context
         )
 
-    def add_message(self, user_id: int, role: str, text: str):
-        db.add_message(user_id, role, text)
+    def add_message(self, user_id: int, role: str, text: str) -> None:
+        """Добавляет сообщение в диалог.
 
-    def is_session_active(self, dialog: Dialog) -> bool:
-        return dialog.is_active(self.timeout_hours)
+        Сохраняет сообщение в БД и синхронизирует с кэшем.
+
+        Args:
+            user_id: ID пользователя
+            role: Роль (user или bot)
+            text: Текст сообщения
+        """
+        db.add_message(user_id, role, text, self.max_history_messages)
+        # Синхронизировать с кэшем в памяти
+        with self._lock:
+            if user_id in self._dialogs:
+                dialog, _ = self._dialogs[user_id]
+                dialog.add_message(role, text)
+                # Обновляем last_used
+                self._dialogs[user_id] = (dialog, time())
+
+    def register_dialog(self, dialog: Dialog) -> None:
+        """Регистрирует новый диалог в кэше.
+
+        Args:
+            dialog: Диалог для регистрации
+        """
+        with self._lock:
+            self._dialogs[dialog.user_id] = (dialog, time())
+            self._trim_to_max_size()

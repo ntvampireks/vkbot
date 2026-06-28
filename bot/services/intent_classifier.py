@@ -13,7 +13,10 @@ class MessageText(BaseModel):
 
 
 class IntentClassifier:
+    """Классификатор намерений сообщений по ключевым словам."""
+
     def __init__(self):
+        """Инициализирует классификатор с предопределёнными интентами."""
         self.intents = {
             'greeting': ['привет', 'здравствуйте', 'доброго времени', 'здравствуй', 'hello', 'hi'],
             'help': ['помощь', 'help', 'что умеешь', 'подскажи', 'помогите'],
@@ -36,22 +39,19 @@ class IntentClassifier:
         try:
             validated = MessageText(text=text)
             return validated.text
-        except Exception:
+        except Exception as e:
+            logger.debug(f'Failed to validate message text: {e}')
             return ''
 
-    def has_mention(self, message: Message, bot_name: str | None = None) -> bool:
-        """Проверка, упомянут ли бот в сообщении."""
-        if not bot_name:
-            return False
-        text = self._get_text(message)
-        if not text:
-            return False
-        bot_name_lower = bot_name.lower()
-        # Ищем упоминание в формате @имя или @имя(123456), игнорируя регистр
-        pattern = rf'@{re.escape(bot_name_lower)}(\d+)?'
-        return bool(re.search(pattern, text, re.IGNORECASE))
-
     def classify(self, message: Message) -> str:
+        """Классифицирует сообщение по намерению.
+
+        Args:
+            message: Сообщение от пользователя
+
+        Returns:
+            Строка с названием intent ('greeting', 'help' или 'unknown')
+        """
         text = self._get_text(message).lower()
 
         for intent, keywords in self.intents.items():

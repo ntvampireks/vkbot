@@ -153,3 +153,95 @@ class TestMessage:
         }
         message = Message.from_vk_event(event_data)
         assert message.timestamp == ts
+
+
+class TestDialogThreadSafety:
+    """Тесты на потокобезопасность Dialog."""
+
+    def test_concurrent_add_message(self):
+        """Параллельное добавление сообщений из нескольких потоков."""
+        import threading
+        import time
+
+        # Большой лимит чтобы сообщения не обрезались
+        dialog = Dialog(
+            user_id=123,
+            last_active=datetime.now(),
+            max_history_messages=1000
+        )
+
+        num_threads = 10
+        messages_per_thread = 20
+        errors = []
+
+        def add_messages(thread_id):
+            try:
+                for i in range(messages_per_thread):
+                    dialog.add_message('user', f'msg_{thread_id}_{i}')
+                    time.sleep(0.001)
+            except Exception as e:
+                errors.append(e)
+
+        threads = [
+            threading.Thread(target=add_messages, args=(i,))
+            for i in range(num_threads)
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Все сообщения должны быть добавлены без потерь
+        expected_count = num_threads * messages_per_thread
+        actual_count = len(dialog.history)
+
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        assert actual_count == expected_count, f"Expected {expected_count} messages, got {actual_count}"
+
+    def test_concurrent_read_write(self):
+        """Параллельное чтение и запись."""
+        import threading
+
+        dialog = Dialog(
+            user_id=123,
+            last_active=datetime.now(),
+            max_history_messages=100
+        )
+
+        # Добавим начальные сообщения
+        for i in range(10):
+            dialog.add_message('user', f'init_{i}')
+
+        errors = []
+        read_counts = []
+
+        def writer():
+            try:
+                for i in range(50):
+                    dialog.add_message('bot', f'bot_msg_{i}')
+            except Exception as e:
+                errors.append(('writer', e))
+
+        def reader(reader_id):
+            try:
+                for _ in range(50):
+                    history = dialog.get_history()
+                    read_counts.append(len(history))
+            except Exception as e:
+                errors.append((f'reader_{reader_id}', e))
+
+        threads = [
+            threading.Thread(target=writer),
+            threading.Thread(target=reader, args=(1,)),
+            threading.Thread(target=reader, args=(2,)),
+            threading.Thread(target=reader, args=(3,)),
+        ]
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(errors) == 0, f"Errors occurred: {errors}"
+        assert len(read_counts) == 150  # 3 читателя × 50 итераций

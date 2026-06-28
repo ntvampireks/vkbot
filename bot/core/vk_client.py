@@ -1,21 +1,33 @@
 import vk_api
-from vk_api.longpoll import VkLongPoll, VkEventType
+from vk_api.longpoll import VkLongPoll
 from vk_api.exceptions import AccessDenied, AuthError, ApiError
-from typing import Callable
+from typing import Callable, NoReturn
 import random
 import time
-from bot.config import get_settings
-from bot.utils.app_logger import get_logger
-
-settings = get_settings()
-
-logger = get_logger(__name__)
+import logging
+import requests
+from bot.config import Settings
+from bot.utils.inject import get_default_logger
 
 
 class VKClient:
-    def __init__(self):
+    """Клиент VK API с LongPoll поддержкой.
+
+    Предоставляет интерфейс для отправки сообщений и получения событий
+    через VK LongPoll API. Включает экспоненциальный backoff при ошибках.
+    """
+
+    def __init__(self, settings: Settings, logger: logging.Logger | None = None):
+        """Инициализирует VK клиент.
+
+        Args:
+            settings: Конфигурация с токеном и ID сообщества
+            logger: Логгер (опционально)
+        """
+        self._settings = settings
+        self._logger = logger or get_default_logger(__name__)
         self.vk_session = vk_api.VkApi(
-            token=settings.vk_group_token
+            token=self._settings.vk_group_token
         )
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
@@ -23,15 +35,70 @@ class VKClient:
 
         # Проверка валидности токена
         try:
-            self.vk.groups.getMembers(group_id=settings.vk_group_id_int, count=1)
-            logger.info('VK API токен успешно валидирован')
+            self.vk.groups.getMembers(group_id=self._settings.vk_group_id_int, count=1)
+            self._logger.info('VK API токен успешно валидирован')
         except AuthError as e:
-            logger.critical(f'Ошибка аутентификации VK токена: {e}')
-            raise
+            self._handle_auth_error('токена', e)
         except Exception as e:
-            logger.warning(f'Не удалось валидировать токен: {e}')
+            self._logger.warning(f'Не удалось валидировать токен: {e}')
 
-    def send_message(self, peer_id: int, text: str, reply_to: int | None = None) -> None:
+    def _handle_auth_error(self, context: str, error: AuthError) -> NoReturn:
+        """Обработка ошибки аутентификации VK API."""
+        self._logger.critical(f'Ошибка аутентификации {context}: {error}')
+        raise
+
+    def _parse_event(self, event) -> dict:
+        """Распарсить VK событие в структуру сообщения."""
+        return {
+            "message_id": getattr(event, "message_id", -100),
+            "user_id": getattr(event, "user_id", -100),
+            "text": getattr(event, "text", ""),
+            "timestamp": getattr(event, "timestamp", 0),
+            "peer_id": getattr(event, "peer_id", -100),
+            "attachments": getattr(event, "attachments", []),
+            "type": event.type if hasattr(event, "type") else event.get("type"),
+            "out": getattr(event, "out", 0)
+        }
+
+    def _calculate_backoff_delay(self, attempt: int, base_delay: int = 1, max_delay: int = 60) -> float:
+        """Вычислить задержку перед повторным подключением (экспоненциальный backoff)."""
+        delay = min(base_delay * (2 ** (attempt - 1)), max_delay)
+        self._logger.info(f'Повторная попытка подключения через {delay:.1f}с (попытка {attempt})')
+        return delay
+
+    def _sleep_interruptible(self, delay: float, running_flag: bool) -> bool:
+        """Sleep с возможностью прерывания. Возвращает True если был прерван."""
+        slept = 0.0
+        while slept < delay and running_flag:
+            time.sleep(0.5)
+            slept += 0.5
+        return not running_flag
+
+    def send_message(self, peer_id: int, text: str, reply_to: int | None = None, timeout: int = 5) -> None:
+        """Отправляет сообщение через VK API.
+
+        Args:
+            peer_id: ID получателя (должен быть положительным int)
+            text: Текст сообщения
+            reply_to: ID сообщения для ответа (опционально)
+            timeout: Таймаут запроса в секундах
+
+        Raises:
+            ValueError: Если peer_id невалиден
+            AuthError: Если ошибка аутентификации
+            ApiError: Если ошибка VK API
+            ConnectionError: Если сетевая ошибка
+        """
+        if not isinstance(peer_id, int):
+            self._logger.error(f'Невалидный peer_id: ожидался int, получен {type(peer_id).__name__}')
+            raise ValueError(f'peer_id должен быть int, получен {type(peer_id).__name__}')
+        if peer_id <= 0:
+            self._logger.error(f'peer_id должен быть положительным: {peer_id}')
+            raise ValueError(f'peer_id должен быть положительным, получен {peer_id}')
+        if peer_id > 2**31 - 1:
+            self._logger.error(f'peer_id превышает максимальное значение: {peer_id}')
+            raise ValueError(f'peer_id превышает максимальное значение (2147483647)')
+
         if len(text) > 40960:
             text = text[:40930] + '...'
         try:
@@ -39,78 +106,65 @@ class VKClient:
                 'peer_id': peer_id,
                 'message': text,
                 'random_id': random.randint(0, 2**31 - 1),
+                'timeout': timeout,
             }
             if reply_to is not None:
                 params['reply_to'] = reply_to
 
             self.vk.messages.send(**params)
 
-            logger.info(f'Сообщение отправлено в peer_id={peer_id}, reply_to={reply_to}')
+            self._logger.info(f'Сообщение отправлено в peer_id={peer_id}, reply_to={reply_to}')
         except AuthError as e:
-            logger.critical(f'Ошибка аутентификации при отправке: {e}')
+            self._handle_auth_error('при отправке', e)
+        except requests.exceptions.Timeout as e:
+            self._logger.warning(f'Timeout при отправке сообщения: {e}')
+            raise
+        except requests.exceptions.ConnectionError as e:
+            self._logger.warning(f'Сетевая ошибка при отправке: {e}')
             raise
         except ApiError as e:
-            logger.error(f'Ошибка VK API при отправке: {e}')
+            self._logger.error(f'Ошибка VK API при отправке: {e}')
             raise
         except AccessDenied as e:
-            logger.error(f'Доступ запрещён: {e}')
+            self._logger.error(f'Доступ запрещён: {e}')
             raise
         except Exception as e:
-            logger.error(f'Ошибка отправки сообщения: {e}')
+            self._logger.error(f'Ошибка отправки сообщения: {e}')
             raise
 
     def run_forever(self, on_message: Callable[[dict], None]) -> None:
         """Запускает LongPoll с экспоненциальным backoff при ошибках."""
         self._running = True
-        max_reconnect_delay = 60  # Максимальная задержка 60 секунд
-        base_delay = 1  # Базовая задержка 1 секунда
+        max_reconnect_delay = 60
+        base_delay = 1
         reconnect_attempts = 0
 
         while self._running:
             try:
                 for event in self.longpoll.check():
-                    event_type = event.type if hasattr(event, 'type') else event.get("type")
+                    if not self._running:
+                        return
+                    message_struct = self._parse_event(event)
+                    on_message(message_struct)
 
-                    if event_type == VkEventType.MESSAGE_NEW:
-                        message_id = getattr(event, "message_id", -100)
-                        user_id = getattr(event, "user_id", -100)
-                        text = getattr(event, "text", "")
-                        timestamp = getattr(event, "timestamp", 0)
-                        peer_id = getattr(event, "peer_id", -100)
-                        attachments = getattr(event, "attachments", [])
-                        out = getattr(event, "out", 0)
-
-                        message_struct = {
-                            "message_id": message_id,
-                            "user_id": user_id,
-                            "text": text,
-                            "timestamp": timestamp,
-                            "peer_id": peer_id,
-                            "attachments": attachments,
-                            "type": event_type,
-                            "out": out
-                        }
-                        on_message(message_struct)
-
-                # Успешная проверка — сбрасываем счетчик попыток
                 reconnect_attempts = 0
 
             except AuthError as e:
-                logger.critical(f'Ошибка аутентификации VK: {e}')
                 self._running = False
-                raise
+                self._handle_auth_error('VK', e)
             except ApiError as e:
-                logger.error(f'Ошибка VK API: {e}')
+                self._logger.error(f'Ошибка VK API: {e}')
             except Exception as e:
-                logger.error(f'Ошибка LongPoll: {e}')
-
-                # Экспоненциальный backoff
+                self._logger.error(f'Ошибка LongPoll: {e}')
                 reconnect_attempts += 1
-                delay = min(base_delay * (2 ** (reconnect_attempts - 1)), max_reconnect_delay)
-                logger.info(f'Повторная попытка подключения через {delay:.1f}с (попытка {reconnect_attempts})')
-                time.sleep(delay)
+                delay = self._calculate_backoff_delay(reconnect_attempts, base_delay, max_reconnect_delay)
+                if self._sleep_interruptible(delay, self._running):
+                    continue
 
     def stop(self):
         """Останавливает LongPoll."""
-        logger.info('Остановка VK клиента...')
+        self._logger.info('Остановка VK клиента...')
         self._running = False
+        # Прерываем текущий HTTP-запрос longpoll
+        if self.longpoll:
+            self.longpoll.update_longpoll_server(update_ts=False)

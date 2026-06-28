@@ -16,6 +16,7 @@ class MetricsCollector:
     """Сборщик метрик для мониторинга бота."""
 
     def __init__(self):
+        """Инициализирует сборщик метрик."""
         self._lock = threading.Lock()
         self._counters: Dict[str, int] = {}
         self._gauges: Dict[str, float] = {}

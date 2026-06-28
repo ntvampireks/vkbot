@@ -34,7 +34,15 @@ def create_router() -> dict[str, Any]:
                     logger.error(f'Ошибка регистрации {attr_name}: {e}')
 
     if 'unknown' not in router:
-        from bot.handlers import DefaultHandler
-        router['unknown'] = DefaultHandler()
+        try:
+            from bot.handlers import DefaultHandler
+            router['unknown'] = DefaultHandler()
+            logger.info('Зарегистрирован DefaultHandler для неизвестных intent')
+        except ImportError as e:
+            logger.error(f'Критическая ошибка: DefaultHandler не найден: {e}')
+            raise RuntimeError(
+                'DefaultHandler обязателен для работы бота. '
+                'Проверьте наличие bot/handlers/default_handler.py'
+            ) from e
 
     return router

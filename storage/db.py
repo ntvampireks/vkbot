@@ -3,16 +3,29 @@ import json
 from datetime import datetime
 from contextlib import contextmanager
 from pathlib import Path
-
-import bot.config as config
-
+from typing import Any
 
 DB_PATH = Path(__file__).parent / 'dialogs.db'
 
 
+def _trim_old_messages(conn: sqlite3.Connection, user_id: int, max_messages: int) -> None:
+    """Удалить старые сообщения, оставив только последние max_messages."""
+    cursor = conn.execute(
+        'SELECT id FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+        (user_id, max_messages)
+    )
+    kept_ids = [row['id'] for row in cursor.fetchall()]
+    if kept_ids:
+        placeholders = ','.join(['?'] * len(kept_ids))
+        query = 'DELETE FROM messages WHERE user_id = ? AND id NOT IN (' + placeholders + ')'
+        conn.execute(query, (user_id, *kept_ids))
+    else:
+        conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
+
+
 @contextmanager
 def get_connection():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30.0)
     conn.row_factory = sqlite3.Row
     try:
         yield conn
@@ -22,6 +35,7 @@ def get_connection():
 
 def init_db():
     with get_connection() as conn:
+        # Таблицы
         conn.execute('''
             CREATE TABLE IF NOT EXISTS dialogs (
                 user_id INTEGER PRIMARY KEY,
@@ -40,6 +54,13 @@ def init_db():
                 FOREIGN KEY (user_id) REFERENCES dialogs(user_id)
             )
         ''')
+
+        # Индексы для производительности
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)')
+        conn.execute('CREATE INDEX IF NOT EXISTS idx_dialogs_last_active ON dialogs(last_active)')
+
         conn.commit()
 
 
@@ -74,29 +95,23 @@ def get_dialog(user_id: int) -> dict | None:
     return None
 
 
-def add_message(user_id: int, role: str, text: str):
+def add_message(user_id: int, role: str, text: str, max_history_messages: int = 100) -> None:
+    # Валидация входных данных
+    if not isinstance(user_id, int) or user_id <= 0:
+        raise ValueError(f'user_id должен быть положительным целым числом, получен {user_id}')
+    if not isinstance(role, str) or role not in ('user', 'bot'):
+        raise ValueError(f'role должен быть "user" или "bot", получен {role!r}')
+    if not isinstance(text, str) or not text.strip():
+        raise ValueError('text должен быть непустой строкой')
+
     timestamp = datetime.now().isoformat()
     with get_connection() as conn:
         conn.execute('''
             INSERT INTO messages (user_id, role, text, timestamp)
             VALUES (?, ?, ?, ?)
         ''', (user_id, role, text, timestamp))
-        # Удаляем старые сообщения, оставляем только последние MAX_HISTORY_MESSAGES
-        max_messages = config.get_settings().max_history_messages
-        cursor = conn.execute(
-            'SELECT id FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
-            (user_id, max_messages)
-        )
-        kept_ids = [row['id'] for row in cursor.fetchall()]
-        if kept_ids:
-            # Используем параметризованный запрос с ? для каждого ID
-            placeholders = ','.join(['?'] * len(kept_ids))
-            query = 'DELETE FROM messages WHERE user_id = ? AND id NOT IN (' + placeholders + ')'
-            # Параметры передаются как кортеж: user_id + список kept_ids
-            params = (user_id, *kept_ids)
-            conn.execute(query, params)
-        else:
-            conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
+        # Удаляем старые сообщения
+        _trim_old_messages(conn, user_id, max_history_messages)
         conn.commit()
 
 

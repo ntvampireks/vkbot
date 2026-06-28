@@ -9,7 +9,11 @@ app = FastAPI(title='VK Bot Health Check')
 
 @app.get('/health')
 async def health_check():
-    """Получить статус здоровья бота."""
+    """Получить статус здоровья бота.
+
+    Returns:
+        JSON с статусом, uptime и счётчиками сообщений
+    """
     metrics = get_metrics()
     metrics_data = metrics.get_all_metrics()
 
@@ -24,7 +28,11 @@ async def health_check():
 
 @app.get('/ready')
 async def ready_check():
-    """Проверка готовности к работе."""
+    """Проверка готовности к работе.
+
+    Returns:
+        JSON с статусом готовности
+    """
     return {
         'status': 'ready',
         'config_valid': True,
@@ -33,6 +41,10 @@ async def ready_check():
 
 @app.get('/metrics', response_class=PlainTextResponse)
 async def metrics():
-    """Получить метрики в формате Prometheus."""
+    """Получить метрики в формате Prometheus.
+
+    Returns:
+        Текстовый ответ в формате Prometheus metrics
+    """
     metrics = get_metrics()
     return metrics.get_prometheus_format()

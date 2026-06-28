@@ -1,7 +1,8 @@
 import re
 from typing import Pattern
 from bot.utils.app_logger import get_logger
-from bot.config import get_settings
+from bot.config import Settings
+from bot.domains.message import Message
 
 logger = get_logger(__name__)
 
@@ -61,12 +62,12 @@ def is_prompt_injection(text: str) -> bool:
     return bool(pattern.search(text))
 
 
-def sanitize_text(text: str, max_length: int | None = None) -> str:
+def sanitize_text(text: str, settings: Settings) -> str:
     """Очищает и валидирует текст сообщения.
 
     Args:
         text: Исходный текст
-        max_length: Максимальная длина текста (если None, берётся из конфигурации)
+        settings: Экземпляр Settings (обязательный)
 
     Returns:
         Очищенный текст
@@ -74,9 +75,7 @@ def sanitize_text(text: str, max_length: int | None = None) -> str:
     Raises:
         ValueError: Если текст превышает лимит или содержит опасный контент
     """
-    if max_length is None:
-        settings = get_settings()
-        max_length = settings.max_message_length
+    max_length = settings.max_message_length
 
     if not text:
         return ''
@@ -87,7 +86,6 @@ def sanitize_text(text: str, max_length: int | None = None) -> str:
         raise ValueError(f'Слишком длинное сообщение: максимум {max_length} символов')
 
     # Проверка на prompt injection
-    settings = get_settings()
     if settings.enable_prompt_injection_protection and is_prompt_injection(text):
         logger.warning(f'Обнаружена попытка prompt injection: {text[:100]}')
         raise ValueError('Недопустимое содержимое сообщения')
@@ -101,19 +99,17 @@ def sanitize_text(text: str, max_length: int | None = None) -> str:
     return text.strip()
 
 
-def validate_message(text: str, max_length: int | None = None) -> tuple[bool, str]:
-    """Полная валидация сообщения.
+def validate_message(text: str, settings: Settings) -> tuple[bool, str]:
+    """Проверяет сообщение на валидность.
 
     Args:
         text: Текст сообщения
-        max_length: Максимальная длина
+        settings: Экземпляр Settings (обязательный)
 
     Returns:
         Кортеж (is_valid, error_message)
     """
-    if max_length is None:
-        settings = get_settings()
-        max_length = settings.max_message_length
+    max_length = settings.max_message_length
 
     if not text or not text.strip():
         return False, 'Пустое сообщение'
@@ -121,27 +117,30 @@ def validate_message(text: str, max_length: int | None = None) -> tuple[bool, st
     if len(text) > max_length:
         return False, f'Превышен лимит длины: {len(text)} > {max_length}'
 
-    settings = get_settings()
     if settings.enable_prompt_injection_protection and is_prompt_injection(text):
         return False, 'Обнаружено недопустимое содержимое'
 
     return True, ''
 
 
-def sanitize_message(text: str, max_length: int | None = None) -> str:
-    """Очищает и возвращает безопасный текст сообщения.
-
-    Это обёртка над sanitize_text с более понятным именем для использования
-    в других модулях.
+def has_mention(message: Message, bot_name: str | None = None) -> bool:
+    """Проверка, упомянут ли бот в сообщении.
 
     Args:
-        text: Исходный текст сообщения
-        max_length: Максимальная длина (если None, берётся из конфигурации)
+        message: Сообщение от пользователя
+        bot_name: Имя бота для поиска упоминания
 
     Returns:
-        Очищенный и безопасный текст
-
-    Raises:
-        ValueError: Если текст не проходит валидацию
+        True если бот упомянут в формате @имя или @имя(123456)
     """
-    return sanitize_text(text, max_length)
+    if not bot_name:
+        return False
+
+    text = message.text or ''
+    if not text.strip():
+        return False
+
+    bot_name_lower = bot_name.lower()
+    # Ищем упоминание в формате @имя или @имя(123456), игнорируя регистр
+    pattern = rf'@{re.escape(bot_name_lower)}(\d+)?'
+    return bool(re.search(pattern, text, re.IGNORECASE))

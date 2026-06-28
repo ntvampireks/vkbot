@@ -1,0 +1,156 @@
+graph TB
+    subgraph "VK LongPoll API"
+        VK[Событие MESSAGE_NEW]
+    end
+
+    subgraph "Core Layer"
+        EH[EventHandler.handle_event]
+        MD[MessageDeduplicator<br/>bot/utils/deduplication.py]
+        PRL[PerUserRateLimiter<br/>bot/utils/per_user_limiter.py]
+        SM[sanitize_text<br/>bot/utils/message_validator.py]
+        MSG[Message.from_vk_event<br/>bot/domains/message.py]
+    end
+
+    subgraph "Callback Layer (main.py)"
+        CB[on_message callback]
+        CM[has_mention<br/>проверка упоминания бота]
+        CA[проверка вложений<br/>отклонение с ответом]
+    end
+
+    subgraph "Orchestration - MessageProcessor"
+        PM1[process<br/>entry point]
+        PM2[_prepare_dialog_context]
+        PM3[_handle_message]
+        PM4[_send_response]
+        PM5[_finalize_message]
+    end
+
+    subgraph "Processing Layer"
+        IC[IntentClassifier.classify<br/>bot/services/intent_classifier.py]
+        RT[Router<br/>bot/orchestration/router.py]
+    end
+
+    subgraph "Handlers"
+        GH[GreetingHandler<br/>bot/handlers/greeting_handler.py]
+        HH[HelpHandler<br/>bot/handlers/help_handler.py]
+        DH[DefaultHandler<br/>bot/handlers/default_handler.py]
+    end
+
+    subgraph "Persistence Layer"
+        DS[DialogService<br/>bot/services/dialog_service.py]
+        DBD[db.save_dialog<br/>storage/db.py]
+        DBA[db.add_message<br/>storage/db.py]
+        DBM[db.get_dialog<br/>storage/db.py]
+        DBH[db.get_messages<br/>storage/db.py]
+    end
+
+    subgraph "Messaging Layer"
+        MS[MessageService<br/>bot/services/message_service.py]
+        MQ[MessageQueue<br/>bot/services/message_queue.py]
+        MST[MessageSender<br/>bot/services/message_sender.py]
+        VKS[VKClient.send_message<br/>bot/core/vk_client.py]
+        RL[RateLimiter<br/>bot/services/rate_limiter.py]
+    end
+
+    subgraph "Monitoring"
+        MET[MetricsCollector<br/>bot/utils/metrics.py]
+        HS[Health Server<br/>bot/api.py]
+    end
+
+    subgraph "Lifecycle"
+        SH[graceful_shutdown<br/>bot/lifecycle/shutdown.py]
+    end
+
+    %% Main flow
+    VK --> EH
+    EH --> MSG
+    MSG --> MD
+
+    MD -->|duplicate?| D1{{да}}
+    D1 -->|да| END1[игнорировать]
+    D1 -->|нет| PRL
+
+    PRL -->|limit?| D2{{превышен?}}
+    D2 -->|да| END2[игнорировать]
+    D2 -->|нет| SM
+
+    SM -->|sanitize| MSG2[Message объект]
+    MSG2 --> CB
+
+    CB --> CM
+    CM -->|не упомянут| SKIP[пропустить]
+    CM -->|упомянут| CA
+    CA -->|есть вложения| RESP1[ответ о неподдержке вложений]
+    CA -->|нет вложений| PM1
+
+    %% MessageProcessor flow
+    PM1 --> MET
+    MET -.->|record_message_received| PM1
+    PM1 --> PM2
+
+    PM2 -->|get_dialog| DS
+    DS -->|кэш или| DBM
+    DBM --> PM2A[Dialog контекст]
+    PM2 --> PM2A
+
+    PM2A --> PM3
+
+    PM3 --> IC
+    IC -->|classify| RT
+    RT -->|handler| H{{выбор}}
+
+    H -->|greeting| GH
+    H -->|help| HH
+    H -->|unknown| DH
+
+    GH --> RES[response]
+    HH --> RES
+    DH --> RES
+
+    RES --> PM4
+    PM4 -->|send| MS
+    MS --> MQ
+    MQ --> MST
+    MST -->|wait| RL
+    RL --> VKS
+
+    VKS -->|success| MET2[record_message_sent]
+    VKS -->|error| RETRY[retry attempt]
+    RETRY -->|attempts < max| MST
+    RETRY -->|attempts = max| MET3[record_message_error]
+
+    MET2 --> LOG[логирование]
+    MET3 --> LOGERR[логирование ошибки]
+
+    PM5 -->|user| DBA
+    PM5 -->|bot| DBA2[db.add_message]
+
+    %% Health API
+    HS -->|/health| STATUS[статус + метрики]
+    HS -->|/ready| READY[готовность]
+    HS -->|/metrics| PROM[Prometheus формат]
+
+    %% Signal handlers
+    SIG[SIGINT/SIGTERM] --> SH
+    SH -->|stop| MST
+    SH -->|stop| VK
+
+    %% Styling
+    style VK fill:#e1f5ff
+    style MSG fill:#fff3e0
+    style CB fill:#fff3e0
+    style IC fill:#f3e5f5
+    style RT fill:#f3e5f5
+    style RES fill:#e8f5e9
+    style DBD fill:#fff8e1
+    style DBA fill:#fff8e1
+    style DBM fill:#fff8e1
+    style VKS fill:#ffebee
+    style MET fill:#f1f8e9
+    style PM1 fill:#f0f4c3
+    style PM2 fill:#f0f4c3
+    style PM3 fill:#f0f4c3
+    style PM4 fill:#f0f4c3
+    style PM5 fill:#f0f4c3
+    style HS fill:#e8eaf6
+    style SH fill:#ffebee

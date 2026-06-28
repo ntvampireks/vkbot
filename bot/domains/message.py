@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 @dataclass
@@ -9,7 +10,7 @@ class Message:
     text: str
     timestamp: datetime
     peer_id: int | None = None
-    attachments: list = None
+    attachments: list[dict[str, Any]] | None = None
     out: int = 0
 
     @classmethod

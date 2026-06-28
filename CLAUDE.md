@@ -26,13 +26,64 @@ pip install -r requirements.txt
 ## Архитектура
 
 ```
-VK LongPoll → EventHandler → on_message() → IntentClassifier
-                                                 ↓
-                                            Router → Handler
-                                                 ↓
-                                        MessageService → Ответ
-                                                 ↓
-                                        DialogService (сохранение)
+┌─────────────────────────────────────────────────────────────────────┐
+│                        VK LongPoll API                              │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    EventHandler.handle_event()                      │
+│  • Фильтрация типа события (MESSAGE_NEW)                            │
+│  • Фильтрация сообщений от бота                                     │
+│  • MessageDeduplicator (проверка дубликатов)                        │
+│  • PerUserRateLimiter (ограничение частоты)                         │
+│  • Валидация и санитизация текста                                   │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   on_message() callback (main.py)                   │
+│  • Проверка упоминания бота (@имя)                                  │
+│  • Проверка вложений (отклонение с ответом)                         │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                   MessageProcessor.process()                        │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ _prepare_dialog_context()                                   │   │
+│  │   → DialogService.get_dialog() → SQLite                     │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ _handle_message()                                           │   │
+│  │   → IntentClassifier.classify() → Router.get(intent)       │   │
+│  │   → Handler.handle(message, dialog)                         │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ _send_response()                                            │   │
+│  │   → MessageService.send() → MessageQueue                    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+│  ┌─────────────────────────────────────────────────────────────┐   │
+│  │ _finalize_message()                                         │   │
+│  │   → DialogService.add_message() → SQLite                    │   │
+│  └─────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    MessageSender (фоновый поток)                    │
+│  • Получение из MessageQueue                                        │
+│  • RateLimiter (глобальный ~3 msg/sec)                              │
+│  • Экспоненциальный backoff при ошибках                             │
+│  → VKClient.send_message() → VK API                                 │
+└─────────────────────────────────────────────────────────────────────┘
+                             │
+                             ▼
+                      ┌──────────────┐
+                      │   SQLite DB  │
+                      │  dialogs +   │
+                      │  messages    │
+                      └──────────────┘
 ```
 
 ### Ключевые компоненты
@@ -40,21 +91,35 @@ VK LongPoll → EventHandler → on_message() → IntentClassifier
 | Компонент | Путь | Описание |
 |-----------|------|----------|
 | VKClient | `bot/core/vk_client.py` | Клиент VK API с LongPoll, отправляет сообщения |
-| EventHandler | `bot/core/event_handler.py` | Обработка событий VK, делегирует `on_message()` |
+| EventHandler | `bot/core/event_handler.py` | Обработка событий VK, дедупликация, per-user rate limiting |
+| MessageDeduplicator | `bot/utils/deduplication.py` | Предотвращение обработки дубликатов сообщений |
+| PerUserRateLimiter | `bot/utils/per_user_limiter.py` | Ограничение частоты запросов по пользователю |
 | DialogService | `bot/services/dialog_service.py` | Управление контекстом диалогов, SQLite хранение |
 | IntentClassifier | `bot/services/intent_classifier.py` | Классификация намерений по ключевым словам |
-| MessageService | `bot/services/message_service.py` | Отправка сообщений с rate limiting |
+| MessageService | `bot/services/message_service.py` | Координация отправки сообщений |
+| MessageQueue | `bot/services/message_queue.py` | Очередь сообщений для асинхронной отправки |
+| MessageSender | `bot/services/message_sender.py` | Фоновая отправка с ретраями |
+| MetricsCollector | `bot/utils/metrics.py` | Сбор метрик (Prometheus формат) |
+| Health API | `bot/api.py` | Endpoints /health, /ready, /metrics |
 | Handlers | `bot/handlers/` | Обработчики для разных типов диалогов |
 
 ### Система обработки сообщений
 
 1. **VKClient.run_forever()** — слушает LongPoll API
-2. **EventHandler.handle_event()** — преобразует VK события в Message объекты
-3. **on_message()** (в [bot/main.py](file:///Users/vampire/Documents/vk-bot/bot/main.py)) — проверяет упоминание бота и вложения
-4. **IntentClassifier.classify()** — определяет тип запроса по ключевым словам
-5. **Router** — выбирает обработчик по intent
-6. **Handler.handle()** — генерирует ответ
-7. **MessageService.send()** — отправляет ответ через VK API
+2. **EventHandler.handle_event()** — преобразует VK события в Message объекты:
+   - Фильтрация по типу события (только MESSAGE_NEW)
+   - Фильтрация сообщений от бота
+   - Проверка дубликатов (MessageDeduplicator)
+   - Проверка per-user лимитов (PerUserRateLimiter)
+   - Валидация и санитизация текста
+3. **on_message() callback** — проверка упоминания бота и вложений
+4. **MessageProcessor.process()** — оркестрация обработки:
+   - `_prepare_dialog_context()` — получение/создание диалога через DialogService
+   - `_handle_message()` — классификация через IntentClassifier, роутинг, вызов Handler
+   - `_send_response()` — отправка через MessageService → MessageQueue
+   - `_finalize_message()` — сохранение истории через DialogService
+5. **MessageSender** — фоновый поток отправки с ретраями и rate limiting
+6. **MetricsCollector** — сбор метрик на ключевых этапах
 
 ### Добавление нового обработчика
 
@@ -75,9 +140,9 @@ class <Name>Handler(BaseHandler):
         return 'Ответ обработчика'
 ```
 
-2. Система автоматически зарегистрирует его через `create_router()` в [bot/main.py:23](file:///Users/vampire/Documents/vk-bot/bot/main.py#L23-L50)
+2. Система автоматически зарегистрирует его через `create_router()` в [bot/main.py](bot/main.py)
 
-3. Добавьте ключевые слова в IntentClassifier: [bot/services/intent_classifier.py:11](file:///Users/vampire/Documents/vk-bot/bot/services/intent_classifier.py#L11-L14)
+3. Добавьте ключевые слова в IntentClassifier: [bot/services/intent_classifier.py](bot/services/intent_classifier.py)
 
 ### База данных
 
@@ -86,7 +151,110 @@ SQLite в `storage/dialogs.db`:
 - **dialogs** — активные сессии (user_id, last_active, state, context)
 - **messages** — история (user_id, role, text, timestamp)
 
-Модуль: [storage/db.py](file:///Users/vampire/Documents/vk-bot/storage/db.py)
+Модуль: [storage/db.py](storage/db.py)
+
+### Dependency Injection (DI)
+
+Проект использует паттерн Dependency Injection для управления зависимостями. Все зависимости передаются явно через конструкторы компонентов.
+
+#### Полная схема инициализации (из [bot/main.py](bot/main.py))
+
+```python
+from bot.config import Settings
+from bot.utils.app_logger import get_logger
+from bot.utils.metrics import MetricsCollector
+from bot.core.vk_client import VKClient
+from bot.services.rate_limiter import RateLimiter
+from bot.utils.per_user_limiter import PerUserRateLimiter
+from bot.services.dialog_service import DialogService
+from bot.services.message_service import MessageService
+from bot.services.intent_classifier import IntentClassifier
+from bot.orchestration.router import create_router
+from bot.orchestration.message_processor import MessageProcessor
+
+# 1. Создаём базовые компоненты
+settings = Settings()
+logger = get_logger(__name__)
+metrics = MetricsCollector()
+
+# 2. Инициализируем клиенты и сервисы
+vk_client = VKClient(settings, logger)
+rate_limiter = RateLimiter()
+per_user_limiter = PerUserRateLimiter()
+dialog_service = DialogService(settings, logger)
+message_service = MessageService(vk_client, rate_limiter, settings, logger)
+classifier = IntentClassifier()
+
+# 3. Создаём router и processor
+router = create_router(settings, logger)
+processor = MessageProcessor(
+    dialog_service=dialog_service,
+    message_service=message_service,
+    router=router,
+    metrics=metrics,
+    settings=settings,
+    logger=logger
+)
+
+# 4. Запускаем бота
+vk_client.run_forever(on_message=processor.process)
+```
+
+#### Зависимости по компонентам
+
+| Компонент | Зависимости | Зачем |
+|-----------|-------------|-------|
+| `VKClient` | `Settings`, `Logger` | Конфигурация токена, логирование |
+| `EventHandler` | `MessageDeduplicator`, `PerUserRateLimiter`, `on_message` callback | Дедупликация, лимиты, колбэк |
+| `DialogService` | `Settings`, `Logger` | Конфигурация кэша, логирование |
+| `MessageService` | `VKClient`, `RateLimiter`, `Settings`, `Logger` | Отправка через VK, rate limiting |
+| `MessageProcessor` | `DialogService`, `MessageService`, `Router`, `Metrics`, `Settings`, `Logger` | Оркестрация всего потока |
+| `IntentClassifier` | — | Не имеет зависимостей (stateless) |
+
+#### Преимущества DI в этом проекте
+
+1. **Тестируемость** — легко подменять зависимости на моки:
+```python
+from unittest.mock import Mock
+
+mock_logger = Mock()
+mock_dialog_service = Mock()
+mock_message_service = Mock()
+mock_router = Mock()
+mock_metrics = Mock()
+mock_settings = Mock()
+
+processor = MessageProcessor(
+    dialog_service=mock_dialog_service,
+    message_service=mock_message_service,
+    router=mock_router,
+    metrics=mock_metrics,
+    settings=mock_settings,
+    logger=mock_logger
+)
+```
+
+2. **Явные зависимости** — все зависимости видны в сигнатуре конструктора
+
+3. **Лёгкая замена реализаций** — можно заменить `SQLiteDialogService` на `PostgresDialogService` без изменения кода процессора
+
+4. **Отсутствие скрытого состояния** — кроме логгера (который создаётся один раз), нет глобальных переменных
+
+#### Паттерн создания компонентов
+
+```python
+# 1. Создайте новый компонент с явными зависимостями
+class MyNewService:
+    def __init__(self, dialog_service: DialogService, logger: Logger):
+        self._dialog_service = dialog_service
+        self._logger = logger
+
+# 2. Инициализируйте в main() вместе с другими компонентами
+my_new_service = MyNewService(dialog_service=dialog_service, logger=logger)
+
+# 3. Передайте туда, где нужен
+processor = MessageProcessor(..., custom_service=my_new_service)
+```
 
 ## Поведенческие руководства (из AGENTS.md)
 

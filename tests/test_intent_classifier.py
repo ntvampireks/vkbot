@@ -4,6 +4,7 @@ import pytest
 
 from bot.services.intent_classifier import IntentClassifier
 from bot.domains.message import Message
+from bot.utils.message_validator import has_mention
 
 
 class TestIntentClassifier:
@@ -76,33 +77,33 @@ class TestIntentClassifier:
 
     # --- Тесты для has_mention() ---
 
-    def test_has_mention_simple(self, classifier):
+    def test_has_mention_simple(self):
         """Простое упоминание @имя."""
         message = self.create_message("@vkbot привет")
-        assert classifier.has_mention(message, "vkbot") is True
+        assert has_mention(message, "vkbot") is True
 
-    def test_has_mention_with_id(self, classifier):
+    def test_has_mention_with_id(self):
         """Упоминание с ID @имя(123456)."""
         message = self.create_message("@vkbot(123456) привет")
-        assert classifier.has_mention(message, "vkbot") is True
+        assert has_mention(message, "vkbot") is True
 
-    def test_has_mention_case_insensitive(self, classifier):
+    def test_has_mention_case_insensitive(self):
         """Регистронезависимость упоминания."""
         message = self.create_message("@VKBOT привет")
-        assert classifier.has_mention(message, "vkbot") is True
+        assert has_mention(message, "vkbot") is True
 
-    def test_has_mention_not_mentioned(self, classifier):
+    def test_has_mention_not_mentioned(self):
         """Без упоминания."""
         message = self.create_message("привет всем")
-        assert classifier.has_mention(message, "vkbot") is False
+        assert has_mention(message, "vkbot") is False
 
-    def test_has_mention_with_numbers_in_name(self, classifier):
+    def test_has_mention_with_numbers_in_name(self):
         """Упоминание с цифрами в имени бота."""
         message = self.create_message("@vkbot123 привет")
         # Текущий regex не требует границы слова, поэтому совпадает
-        assert classifier.has_mention(message, "vkbot") is True
+        assert has_mention(message, "vkbot") is True
 
-    def test_has_mention_no_bot_name(self, classifier):
+    def test_has_mention_no_bot_name(self):
         """Пустое имя бота."""
         message = self.create_message("@bot привет")
-        assert classifier.has_mention(message, None) is False
+        assert has_mention(message, None) is False

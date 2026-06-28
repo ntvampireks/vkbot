@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-from bot.config import get_settings
+from bot.config import Settings
 
 LOG_LEVEL_MAP = {
     'DEBUG': logging.DEBUG,
@@ -22,7 +22,7 @@ LOG_LEVEL_MAP = {
 _logger: logging.Logger | None = None
 
 
-def get_logger(name: str = 'bot') -> logging.Logger:
+def get_logger(name: str = 'bot', settings: Settings | None = None) -> logging.Logger:
     """Получить логгер для модуля.
 
     Создаёт корневой логгер один раз при первом вызове,
@@ -30,23 +30,36 @@ def get_logger(name: str = 'bot') -> logging.Logger:
 
     Args:
         name: Имя логгера (обычно __name__)
+        settings: Экземпляр Settings для конфигурации логгера.
+            При первом вызове должен быть передан для настройки root logger.
 
     Returns:
         Настроенный логгер
     """
     global _logger
     if _logger is None:
-        _logger = _setup_root_logger()
+        if settings is not None:
+            _logger = _setup_root_logger(settings)
+        else:
+            # Fallback: базовая конфигурация без settings
+            _logger = logging.getLogger('bot')
+            _logger.setLevel(logging.DEBUG)
+            if not _logger.handlers:
+                handler = logging.StreamHandler(sys.stdout)
+                handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+                _logger.addHandler(handler)
 
     return logging.getLogger(name)
 
 
-def _setup_root_logger() -> logging.Logger:
+def _setup_root_logger(settings: Settings) -> logging.Logger:
     """Настраивает корневой логгер с записью в консоль и файлы.
 
     Создаётся один раз при старте приложения.
+
+    Args:
+        settings: Экземпляр Settings с конфигурацией логгера
     """
-    settings = get_settings()
     level = LOG_LEVEL_MAP.get(settings.log_level.upper(), logging.DEBUG)
 
     # Создаём корневой логгер

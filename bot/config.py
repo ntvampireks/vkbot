@@ -34,10 +34,21 @@ class Settings(BaseSettings):
     # Настройки отправки сообщений
     message_send_delay: float = Field(0.5, ge=0, description='Задержка перед отправкой сообщения в секундах')
     message_retry_delay: float = Field(1.0, ge=0, description='Задержка между попытками повторной отправки в секундах')
+    message_api_timeout: int = Field(5, ge=1, le=60, description='Таймаут VK API запроса в секундах')
 
     # Настройки валидации сообщений
     max_message_length: int = Field(10000, ge=1, le=40960, description='Максимальная длина сообщения в символах')
     enable_prompt_injection_protection: bool = Field(True, description='Включить защиту от prompt injection атак')
+
+    # Настройки per-user rate limiter
+    per_user_max_requests: int = Field(10, ge=1, le=100, description='Максимум сообщений от пользователя за окно')
+    per_user_window_seconds: int = Field(60, ge=1, le=3600, description='Размер окна для per-user лимита в секундах')
+
+    # Настройки кэша диалогов
+    max_dialogs_cache: int = Field(1000, ge=100, le=10000, description='Максимальный размер кэша диалогов')
+
+    # Настройки очереди сообщений
+    message_queue_maxsize: int = Field(1000, ge=100, le=10000, description='Максимальный размер очереди сообщений')
 
     @property
     def vk_group_id_int(self) -> int:
@@ -45,13 +56,4 @@ class Settings(BaseSettings):
         return int(self.vk_group_id)
 
 
-# Глобальный экземпляр настроек
-_settings: Settings | None = None
-
-
-def get_settings() -> Settings:
-    """Получить экземпляр настроек (создаётся при первом вызове)."""
-    global _settings
-    if _settings is None:
-        _settings = Settings()
-    return _settings
+# Примечание: Settings создаётся в main.py и передаётся явно через Dependency Injection

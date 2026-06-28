@@ -10,6 +10,12 @@ class MessageDeduplicator:
     """Кэш для предотвращения обработки дубликатов сообщений."""
 
     def __init__(self, max_size: int = 1000, ttl_seconds: int = 300):
+        """Инициализирует дедупликатор сообщений.
+
+        Args:
+            max_size: Максимальный размер кэша
+            ttl_seconds: TTL записей в секундах
+        """
         self._cache = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl_seconds

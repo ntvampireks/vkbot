@@ -1,28 +1,32 @@
 """Точка входа для VK бота."""
 
+import logging
 import sys
 
 from pydantic import ValidationError
 
-from bot.config import get_settings
+from bot.config import Settings
 from bot.core.vk_client import VKClient
 from bot.core.event_handler import EventHandler
 from bot.domains.message import Message
 from bot.services.message_service import MessageService
 from bot.services.dialog_service import DialogService
 from bot.services.intent_classifier import IntentClassifier
-from bot.services import RateLimiter
-from bot.orchestration import create_router, process_message
+from bot.services.rate_limiter import RateLimiter
+from bot.orchestration import create_router
+from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
-from bot.utils.app_logger import get_logger
+from bot.utils.inject import get_default_logger, get_metrics
+from bot.utils.message_validator import has_mention
 from storage.db import init_db
 
-logger = get_logger(__name__)
+logger = get_default_logger(__name__)
+
 
 def main() -> None:
     """Запуск VK бота."""
     try:
-        settings = get_settings()
+        settings = Settings()
     except ValidationError as e:
         logger.error(f'Ошибка конфигурации: {e}')
         logger.error('Проверьте .env файл и убедитесь, что все обязательные переменные установлены:')
@@ -32,21 +36,27 @@ def main() -> None:
         sys.exit(1)
 
     init_db()
-    start_health_server()
+    start_health_server(settings)
 
-    vk_client = VKClient()
+    # Явная инициализация зависимостей
+    logger = get_default_logger('bot')
+    metrics = get_metrics()
 
+    vk_client = VKClient(settings, logger)
     rate_limiter = RateLimiter()
-    message_service = MessageService(vk_client, rate_limiter)
+    message_service = MessageService(vk_client, rate_limiter, settings, logger)
+    message_service.start_processing()
+
     register_signal_handlers(vk_client, message_service)
-    dialog_service = DialogService()
+    dialog_service = DialogService(settings, logger)
     classifier = IntentClassifier()
     router = create_router()
+    processor = MessageProcessor(dialog_service, message_service, router, classifier, metrics, settings, logger)
 
     logger.info('Бот запущен...')
 
     def on_message(message: Message):
-        if not classifier.has_mention(message, settings.vk_bot_name):
+        if not has_mention(message, settings.vk_bot_name):
             logger.debug('Бот не упомянут, пропускаем')
             return
 
@@ -56,10 +66,10 @@ def main() -> None:
                 reply_to=message.id)
             return
 
-        process_message(message, dialog_service, message_service, router, classifier, settings)
+        processor.process(message)
 
     bot_user_id = -int(settings.vk_group_id_int) if settings.vk_group_id else None
-    event_handler = EventHandler(on_message, bot_user_id=bot_user_id)
+    event_handler = EventHandler(on_message, bot_user_id=bot_user_id, settings=settings, logger=logger)
     vk_client.run_forever(event_handler.handle_event)
 
 
