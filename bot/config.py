@@ -50,6 +50,11 @@ class Settings(BaseSettings):
     # Настройки очереди сообщений
     message_queue_maxsize: int = Field(1000, ge=100, le=10000, description='Максимальный размер очереди сообщений')
 
+    # Настройки LLM для IntentClassifier
+    llm_base_url: str = Field(..., min_length=1, description='URL OpenAI-совместимого API')
+    llm_api_key: str = Field('', description='API ключ для LLM сервиса')
+    llm_model_name: str = Field('qwen', description='Имя модели для классификации')
+
     @property
     def vk_group_id_int(self) -> int:
         """Групповой ID как integer."""

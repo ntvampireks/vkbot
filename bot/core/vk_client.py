@@ -6,6 +6,7 @@ import random
 import time
 import logging
 import requests
+import traceback
 from bot.config import Settings
 from bot.utils.inject import get_default_logger
 
@@ -145,7 +146,10 @@ class VKClient:
                     if not self._running:
                         return
                     message_struct = self._parse_event(event)
-                    on_message(message_struct)
+                    try:
+                        on_message(message_struct)
+                    except Exception as e:
+                        self._logger.error(f'Ошибка в обработчике сообщений:\n{traceback.format_exc()}')
 
                 reconnect_attempts = 0
 

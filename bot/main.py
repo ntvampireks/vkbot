@@ -13,6 +13,7 @@ from bot.services.message_service import MessageService
 from bot.services.dialog_service import DialogService
 from bot.services.intent_classifier import IntentClassifier
 from bot.services.rate_limiter import RateLimiter
+from bot.core.openai_client import OpenAIClient
 from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
@@ -49,8 +50,16 @@ def main() -> None:
 
     register_signal_handlers(vk_client, message_service)
     dialog_service = DialogService(settings, logger)
-    classifier = IntentClassifier()
-    router = create_router()
+
+    # Инициализация LLM клиента и классификатора
+    llm_client = OpenAIClient(
+        base_url=settings.llm_base_url,
+        api_key=settings.llm_api_key,
+        model=settings.llm_model_name
+    )
+    router = create_router(llm_client=llm_client)
+    classifier = IntentClassifier(router=router, llm_client=llm_client)
+
     processor = MessageProcessor(dialog_service, message_service, router, classifier, metrics, settings, logger)
 
     logger.info('Бот запущен...')
