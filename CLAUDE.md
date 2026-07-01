@@ -95,7 +95,7 @@ pip install -r requirements.txt
 | MessageDeduplicator | `bot/utils/deduplication.py` | Предотвращение обработки дубликатов сообщений |
 | PerUserRateLimiter | `bot/utils/per_user_limiter.py` | Ограничение частоты запросов по пользователю |
 | DialogService | `bot/services/dialog_service.py` | Управление контекстом диалогов, SQLite хранение |
-| IntentClassifier | `bot/services/intent_classifier.py` | Классификация намерений по ключевым словам |
+| IntentClassifier | `bot/services/intent_classifier.py` | LLM-классификация намерений с schema-guided валидацией |
 | MessageService | `bot/services/message_service.py` | Координация отправки сообщений |
 | MessageQueue | `bot/services/message_queue.py` | Очередь сообщений для асинхронной отправки |
 | MessageSender | `bot/services/message_sender.py` | Фоновая отправка с ретраями |
@@ -136,13 +136,14 @@ class <Name>Handler(BaseHandler):
     def intent(self) -> str:
         return '<name>'
 
-    def handle(self, message: Message, dialog: Dialog | None) -> str:
+    async def handle_async(self, message: Message, dialog: Dialog | None) -> str:
         return 'Ответ обработчика'
+
+    # Опционально: описание для LLM-классификатора
+    intent_description = 'Описание обработчика'
 ```
 
 2. Система автоматически зарегистрирует его через `create_router()` в [bot/main.py](bot/main.py)
-
-3. Добавьте ключевые слова в IntentClassifier: [bot/services/intent_classifier.py](bot/services/intent_classifier.py)
 
 ### База данных
 
@@ -161,20 +162,22 @@ SQLite в `storage/dialogs.db`:
 
 ```python
 from bot.config import Settings
-from bot.utils.app_logger import get_logger
 from bot.utils.metrics import MetricsCollector
 from bot.core.vk_client import VKClient
+from bot.core.event_handler import EventHandler
 from bot.services.rate_limiter import RateLimiter
 from bot.utils.per_user_limiter import PerUserRateLimiter
 from bot.services.dialog_service import DialogService
 from bot.services.message_service import MessageService
+from bot.core.openai_client import OpenAIClient
 from bot.services.intent_classifier import IntentClassifier
 from bot.orchestration.router import create_router
 from bot.orchestration.message_processor import MessageProcessor
+import logging
 
 # 1. Создаём базовые компоненты
 settings = Settings()
-logger = get_logger(__name__)
+logger = logging.getLogger('bot')
 metrics = MetricsCollector()
 
 # 2. Инициализируем клиенты и сервисы
@@ -183,21 +186,30 @@ rate_limiter = RateLimiter()
 per_user_limiter = PerUserRateLimiter()
 dialog_service = DialogService(settings, logger)
 message_service = MessageService(vk_client, rate_limiter, settings, logger)
-classifier = IntentClassifier()
 
-# 3. Создаём router и processor
-router = create_router(settings, logger)
+# 3. Инициализация LLM клиента и классификатора
+llm_client = OpenAIClient(
+    base_url=settings.llm_base_url,
+    api_key=settings.llm_api_key,
+    model=settings.llm_model_name,
+    timeout=settings.llm_timeout
+)
+router = create_router(llm_client=llm_client)
+classifier = IntentClassifier(router=router, llm_client=llm_client)
+
+# 4. Создаём processor
 processor = MessageProcessor(
     dialog_service=dialog_service,
     message_service=message_service,
     router=router,
+    classifier=classifier,
     metrics=metrics,
     settings=settings,
     logger=logger
 )
 
-# 4. Запускаем бота
-vk_client.run_forever(on_message=processor.process)
+# 5. Запускаем бота
+vk_client.run_forever(processor.process)
 ```
 
 #### Зависимости по компонентам

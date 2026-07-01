@@ -29,7 +29,7 @@ class DefaultHandler(BaseHandler):
 
     async def handle_async(self, message: Message, dialog: Dialog | None) -> str:
         if self._llm_client is None:
-            return 'Здравствуйте! Я бот сообщества VK. Чем могу помочь?'
+            return 'Извините, я не понял ваш вопрос. Попробуйте переформулировать или обратитесь к help за помощью.'
 
         user_text = message.text.replace('@бот', '').replace('@Бот', '') or ''
         messages = [
@@ -37,5 +37,5 @@ class DefaultHandler(BaseHandler):
             {'role': 'user', 'content': f'Игрок: {user_text}'}
         ]
 
-        result = await self._llm_client.generate_text_async(messages, temperature=0.8, response_format=ResponseText, max_length=8192)
+        result = await self._llm_client.generate_text_async(messages, temperature=0.8, response_format=ResponseText, max_length=32768)
         return result

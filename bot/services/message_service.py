@@ -7,7 +7,6 @@ from bot.core.vk_client import VKClient
 from bot.services.message_queue import MessageQueue
 from bot.services.message_sender import MessageSender
 from bot.services.rate_limiter import RateLimiter
-from bot.utils.inject import get_default_logger
 
 
 class MessageService:
@@ -32,7 +31,7 @@ class MessageService:
             settings: Конфигурация бота
             logger: Логгер (опционально)
         """
-        self._logger = logger or get_default_logger(__name__)
+        self._logger = logger or logging.getLogger(__name__)
         self.queue = MessageQueue(maxsize=settings.message_queue_maxsize)
         self.sender = MessageSender(
             vk_client=vk_client,

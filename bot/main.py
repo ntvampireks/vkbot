@@ -19,12 +19,11 @@ from bot.core.openai_client import OpenAIClient
 from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
-from bot.utils.inject import get_default_logger, get_metrics
 from bot import api
 from bot.utils.message_validator import has_mention
 from storage.db import init_db
 
-logger = get_default_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -42,7 +41,8 @@ def main() -> None:
     init_db()
 
     # Явная инициализация зависимостей
-    logger = get_default_logger('bot')
+    logger = logging.getLogger('bot')
+    from bot.utils.metrics import get_metrics
     metrics = get_metrics()
 
     # Передаём метрики в Health API для DI

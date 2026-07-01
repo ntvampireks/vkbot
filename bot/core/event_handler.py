@@ -8,7 +8,6 @@ from bot.utils.deduplication import MessageDeduplicator
 from bot.utils.per_user_limiter import PerUserRateLimiter
 from bot.utils.message_validator import sanitize_text
 from bot.config import Settings
-from bot.utils.inject import get_default_logger
 
 
 class EventHandler:
@@ -104,4 +103,4 @@ class EventHandler:
             self._logger.info(f'Получено сообщение {message_id} от user_id={message.user_id}: {message.text[:50]}')
             self.on_message(message)
         except Exception as e:
-            self._logger.error(f'Ошибка обработки события: {e}')
+            self._logger.error(f'Ошибка обработки события: {e}', exc_info=True)

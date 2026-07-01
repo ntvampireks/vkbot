@@ -9,7 +9,6 @@ from bot.config import Settings
 from bot.core.vk_client import VKClient
 from bot.services.message_queue import MessageQueue, QueuedMessage
 from bot.services.rate_limiter import RateLimiter
-from bot.utils.inject import get_default_logger
 
 
 class MessageSender:
@@ -44,7 +43,7 @@ class MessageSender:
         self.send_delay = settings.message_send_delay
         self.retry_delay = settings.message_retry_delay
         self.api_timeout = settings.message_api_timeout
-        self._logger = logger or get_default_logger(__name__)
+        self._logger = logger or logging.getLogger(__name__)
 
         self._running = False
         self._worker_thread: threading.Thread | None = None

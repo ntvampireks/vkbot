@@ -8,7 +8,6 @@ import logging
 
 from bot.domains.dialog import Dialog
 from bot.config import Settings
-from bot.utils.inject import get_default_logger
 import storage.db as db
 
 # Тип для кэша: user_id -> (Dialog, last_used_timestamp)

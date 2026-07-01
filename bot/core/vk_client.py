@@ -8,7 +8,12 @@ import logging
 import requests
 import traceback
 from bot.config import Settings
-from bot.utils.inject import get_default_logger
+
+
+# Константы VK API
+MAX_PEER_ID = 2**31 - 1  # Максимальное значение signed 32-bit int
+MAX_MESSAGE_LENGTH = 40960  # Лимит длины сообщения VK API
+MESSAGE_TRUNCATE_SUFFIX = '...'  # Суффикс при обрезке сообщения
 
 
 class VKClient:
@@ -26,7 +31,7 @@ class VKClient:
             logger: Логгер (опционально)
         """
         self._settings = settings
-        self._logger = logger or get_default_logger(__name__)
+        self._logger = logger or logging.getLogger(__name__)
         self.vk_session = vk_api.VkApi(
             token=self._settings.vk_group_token
         )
@@ -96,12 +101,12 @@ class VKClient:
         if peer_id <= 0:
             self._logger.error(f'peer_id должен быть положительным: {peer_id}')
             raise ValueError(f'peer_id должен быть положительным, получен {peer_id}')
-        if peer_id > 2**31 - 1:
+        if peer_id > MAX_PEER_ID:
             self._logger.error(f'peer_id превышает максимальное значение: {peer_id}')
-            raise ValueError(f'peer_id превышает максимальное значение (2147483647)')
+            raise ValueError(f'peer_id превышает максимальное значение ({MAX_PEER_ID})')
 
-        if len(text) > 40960:
-            text = text[:40930] + '...'
+        if len(text) > MAX_MESSAGE_LENGTH:
+            text = text[:MAX_MESSAGE_LENGTH - len(MESSAGE_TRUNCATE_SUFFIX)] + MESSAGE_TRUNCATE_SUFFIX
         try:
             params = {
                 'peer_id': peer_id,

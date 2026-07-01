@@ -56,8 +56,7 @@ class Settings(BaseSettings):
     llm_api_key: str = Field('', description='API ключ для LLM сервиса')
     llm_model_name: str = Field('qwen', description='Имя модели для классификации')
     llm_timeout: float = Field(30.0, ge=1.0, le=300.0, description='Таймаут LLM запросов в секундах')
-    llm_connect_timeout: float = Field(5.0, ge=1.0, le=60.0, description='Таймаут подключения к LLM в секундах')
-
+    
     @field_validator('llm_base_url')
     @classmethod
     def validate_llm_url(cls, v: str) -> str:

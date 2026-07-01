@@ -12,7 +12,6 @@ from pydantic import ValidationError
 from bot.core.vk_client import VKClient
 from bot.services.message_service import MessageService
 from bot.config import Settings
-from bot.utils.inject import get_default_logger
 
 try:
     from bot.api import app
@@ -20,7 +19,7 @@ try:
 except ImportError:
     FASTAPI_AVAILABLE = False
 
-logger = get_default_logger(__name__)
+logger = logging.getLogger(__name__)
 
 
 def graceful_shutdown(vk_client: VKClient | None, message_service: MessageService | None = None) -> None:

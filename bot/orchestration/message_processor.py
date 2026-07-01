@@ -11,7 +11,6 @@ from bot.utils.message_validator import sanitize_text
 from bot.services.dialog_service import DialogService
 from bot.services.message_service import MessageService
 from bot.services.intent_classifier import IntentClassifier
-from bot.utils.inject import get_default_logger
 
 
 class MessageProcessor:
@@ -51,7 +50,7 @@ class MessageProcessor:
         self.classifier = classifier
         self.metrics = metrics
         self._settings = settings
-        self._logger = logger or get_default_logger(__name__)
+        self._logger = logger or logging.getLogger(__name__)
 
     async def process(self, message: Message) -> None:
         """Обработать входящее сообщение и отправить ответ (асинхронно).
@@ -69,7 +68,7 @@ class MessageProcessor:
             if self._send_response(message, response):
                 self.metrics.inc_counter('messages_sent_total')
 
-            await self._finalize_message(message, response)
+            await self._finalize_message(message, dialog, response)
             self.metrics.record_processing_time(time.time() - start_time)
         except Exception:
             self._logger.error(f'Ошибка обработки сообщения:\n{traceback.format_exc()}')
@@ -106,8 +105,9 @@ class MessageProcessor:
         self._logger.debug(f'Отправка ответа: peer_id={message.peer_id}, reply_to={message.id}')
         return self.message_service.send(message.peer_id or message.user_id, response, reply_to=message.id)
 
-    async def _finalize_message(self, message: Message, response: str) -> None:
+    async def _finalize_message(self, message: Message, dialog: Dialog, response: str) -> None:
         """Сохранить историю сообщений и состояние диалога."""
         safe_text = sanitize_text(message.text, settings=self._settings)
         await self.dialog_service.add_message_async(message.user_id, 'user', safe_text)
         await self.dialog_service.add_message_async(message.user_id, 'bot', response)
+        await self.dialog_service.save_dialog_async(dialog)
