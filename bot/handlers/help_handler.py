@@ -11,10 +11,14 @@ class HelpHandler(BaseHandler):
         return 'help'
 
     @property
+    def intent_description(self) -> str:
+        return 'обработчик команды помощи'
+
+    @property
     def intent_prompt(self) -> str:
         return 'Обработка запросов помощи, справок и вопросов о возможностях'
 
-    def handle(self, message: Message, dialog: Dialog | None) -> str:
+    async def handle_async(self, message: Message, dialog: Dialog | None) -> str:
         return '''Я могу:
 - Отвечать на вопросы о сообществе
 - Помогать с информацией о мероприятиях

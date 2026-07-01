@@ -1,42 +1,40 @@
-import sqlite3
+"""Доступ к SQLite через aiosqlite."""
+
+import asyncio
+import aiosqlite
 import json
 from datetime import datetime
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
 DB_PATH = Path(__file__).parent / 'dialogs.db'
 
 
-def _trim_old_messages(conn: sqlite3.Connection, user_id: int, max_messages: int) -> None:
+async def _trim_old_messages(conn: aiosqlite.Connection, user_id: int, max_messages: int) -> None:
     """Удалить старые сообщения, оставив только последние max_messages."""
-    cursor = conn.execute(
+    cursor = await conn.execute(
         'SELECT id FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
         (user_id, max_messages)
     )
-    kept_ids = [row['id'] for row in cursor.fetchall()]
+    kept_ids = [row[0] for row in await cursor.fetchall()]
     if kept_ids:
         placeholders = ','.join(['?'] * len(kept_ids))
         query = 'DELETE FROM messages WHERE user_id = ? AND id NOT IN (' + placeholders + ')'
-        conn.execute(query, (user_id, *kept_ids))
+        await conn.execute(query, (user_id, *kept_ids))
     else:
-        conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
-
-
-@contextmanager
-def get_connection():
-    conn = sqlite3.connect(DB_PATH, timeout=30.0)
-    conn.row_factory = sqlite3.Row
-    try:
-        yield conn
-    finally:
-        conn.close()
+        await conn.execute('DELETE FROM messages WHERE user_id = ?', (user_id,))
 
 
 def init_db():
-    with get_connection() as conn:
+    """Инициализировать базу данных (синхронная обёртка)."""
+    asyncio.run(_init_db_async())
+
+
+async def _init_db_async():
+    """Инициализировать базу данных (асинхронно)."""
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as conn:
         # Таблицы
-        conn.execute('''
+        await conn.execute('''
             CREATE TABLE IF NOT EXISTS dialogs (
                 user_id INTEGER PRIMARY KEY,
                 last_active TEXT NOT NULL,
@@ -44,7 +42,7 @@ def init_db():
                 context_json TEXT
             )
         ''')
-        conn.execute('''
+        await conn.execute('''
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER NOT NULL,
@@ -56,17 +54,18 @@ def init_db():
         ''')
 
         # Индексы для производительности
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)')
-        conn.execute('CREATE INDEX IF NOT EXISTS idx_dialogs_last_active ON dialogs(last_active)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_id ON messages(user_id)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)')
+        await conn.execute('CREATE INDEX IF NOT EXISTS idx_dialogs_last_active ON dialogs(last_active)')
 
-        conn.commit()
+        await conn.commit()
 
 
-def save_dialog(user_id: int, last_active: datetime, state: str | None = None, context: dict | None = None):
-    with get_connection() as conn:
-        conn.execute('''
+async def save_dialog(user_id: int, last_active: datetime, state: str | None = None, context: dict | None = None):
+    """Сохранить диалог в БД (асинхронно)."""
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as conn:
+        await conn.execute('''
             INSERT OR REPLACE INTO dialogs (user_id, last_active, state, context_json)
             VALUES (?, ?, ?, ?)
         ''', (
@@ -75,27 +74,30 @@ def save_dialog(user_id: int, last_active: datetime, state: str | None = None, c
             state,
             json.dumps(context) if context else None
         ))
-        conn.commit()
+        await conn.commit()
 
 
-def get_dialog(user_id: int) -> dict | None:
-    with get_connection() as conn:
-        cursor = conn.execute(
+async def get_dialog(user_id: int) -> dict | None:
+    """Получить диалог пользователя из БД (асинхронно)."""
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as conn:
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute(
             'SELECT * FROM dialogs WHERE user_id = ?',
             (user_id,)
         )
-        row = cursor.fetchone()
+        row = await cursor.fetchone()
         if row:
             return {
-                'user_id': row['user_id'],
-                'last_active': datetime.fromisoformat(row['last_active']),
-                'state': row['state'],
-                'context': json.loads(row['context_json']) if row['context_json'] else {}
+                'user_id': row[0],
+                'last_active': datetime.fromisoformat(row[1]),
+                'state': row[2],
+                'context': json.loads(row[3]) if row[3] else {}
             }
     return None
 
 
-def add_message(user_id: int, role: str, text: str, max_history_messages: int = 100) -> None:
+async def add_message(user_id: int, role: str, text: str, max_history_messages: int = 100) -> None:
+    """Добавить сообщение в диалог (асинхронно)."""
     # Валидация входных данных
     if not isinstance(user_id, int) or user_id <= 0:
         raise ValueError(f'user_id должен быть положительным целым числом, получен {user_id}')
@@ -105,26 +107,29 @@ def add_message(user_id: int, role: str, text: str, max_history_messages: int = 
         raise ValueError('text должен быть непустой строкой')
 
     timestamp = datetime.now().isoformat()
-    with get_connection() as conn:
-        conn.execute('''
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as conn:
+        await conn.execute('''
             INSERT INTO messages (user_id, role, text, timestamp)
             VALUES (?, ?, ?, ?)
         ''', (user_id, role, text, timestamp))
         # Удаляем старые сообщения
-        _trim_old_messages(conn, user_id, max_history_messages)
-        conn.commit()
+        await _trim_old_messages(conn, user_id, max_history_messages)
+        await conn.commit()
 
 
-def get_messages(user_id: int, limit: int = 10) -> list:
-    with get_connection() as conn:
-        cursor = conn.execute('''
+async def get_messages(user_id: int, limit: int = 10) -> list:
+    """Получить последние сообщения пользователя (асинхронно)."""
+    async with aiosqlite.connect(DB_PATH, timeout=30.0) as conn:
+        conn.row_factory = aiosqlite.Row
+        cursor = await conn.execute('''
             SELECT role, text, timestamp
             FROM messages
             WHERE user_id = ?
             ORDER BY timestamp DESC
             LIMIT ?
         ''', (user_id, limit))
+        rows = await cursor.fetchall()
         return [
             {'role': row['role'], 'text': row['text'], 'timestamp': row['timestamp']}
-            for row in reversed(cursor.fetchall())
+            for row in reversed(rows)
         ]

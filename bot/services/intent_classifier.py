@@ -58,11 +58,21 @@ class IntentClassifier:
 
     def _build_prompt(self, available_intents: list[str], user_text: str) -> list[dict[str, str]]:
         """Формирует промпт для LLM с JSON mode инструкцией."""
-        intents_list = ', '.join(available_intents)
+        # Формируем список обработчиков с описанием
+        handlers_info = []
+        for intent in available_intents:
+            handler = self._router.get(intent)
+            if handler and hasattr(handler, 'intent_description'):
+                handlers_info.append(f"- {intent}: {handler.intent_description}")
+            else:
+                handlers_info.append(f"- {intent}")
+
+        intents_list = '\n'.join(handlers_info)
 
         system_prompt = f'''Ты классификатор намерений. Определи какой обработчик должен обработать сообщение.
 
-Доступные обработчики: {intents_list}
+Доступные обработчики:
+{intents_list}
 
 Верни ТОЛЬКО JSON объект с полем "intent".'''
 
@@ -73,8 +83,8 @@ class IntentClassifier:
             {'role': 'user', 'content': user_prompt}
         ]
 
-    def classify(self, message: Message) -> str:
-        """Классифицирует сообщение через LLM с JSON mode валидацией.
+    async def classify_async(self, message: Message) -> str:
+        """Классифицирует сообщение через LLM с JSON mode валидацией (асинхронно).
 
         Args:
             message: Сообщение от пользователя
@@ -93,7 +103,7 @@ class IntentClassifier:
 
         try:
             messages = self._build_prompt(intents, text)
-            result = self._client.classify_intent(messages, response_format=self._intent_result_model)
+            result = await self._client.classify_intent_async(messages, response_format=self._intent_result_model)
             logger.debug(f'Определён intent: {result.intent}')
             return result.intent
         except Exception as e:

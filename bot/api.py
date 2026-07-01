@@ -1,20 +1,35 @@
 """FastAPI приложение для health-check и метрик."""
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends
 from fastapi.responses import PlainTextResponse
 
-from bot.utils.metrics import get_metrics
+from bot.utils.metrics import MetricsCollector, get_metrics
 
 app = FastAPI(title='VK Bot Health Check')
 
+# Глобальная переменная для метрик (заполняется при старте из main.py)
+_metrics: MetricsCollector | None = None
+
+
+def set_metrics(metrics: MetricsCollector) -> None:
+    """Установить экземпляр метрик (вызывается из main.py при старте)."""
+    global _metrics
+    _metrics = metrics
+
+
+def get_metrics_dependency() -> MetricsCollector:
+    """Dependency для инъекции метрик в FastAPI endpoints."""
+    if _metrics is None:
+        return get_metrics()  # Fallback на глобальный singleton
+    return _metrics
+
 
 @app.get('/health')
-async def health_check():
+async def health_check(metrics: MetricsCollector = Depends(get_metrics_dependency)):
     """Получить статус здоровья бота.
 
     Returns:
         JSON с статусом, uptime и счётчиками сообщений
     """
-    metrics = get_metrics()
     metrics_data = metrics.get_all_metrics()
 
     return {
@@ -40,11 +55,10 @@ async def ready_check():
 
 
 @app.get('/metrics', response_class=PlainTextResponse)
-async def metrics():
+async def metrics_endpoint(metrics: MetricsCollector = Depends(get_metrics_dependency)):
     """Получить метрики в формате Prometheus.
 
     Returns:
         Текстовый ответ в формате Prometheus metrics
     """
-    metrics = get_metrics()
     return metrics.get_prometheus_format()

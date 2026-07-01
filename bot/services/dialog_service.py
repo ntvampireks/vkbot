@@ -1,4 +1,5 @@
 import threading
+import asyncio
 from collections import OrderedDict
 from datetime import datetime
 from time import time
@@ -78,7 +79,7 @@ class DialogService:
 
         return removed
 
-    def get_dialog(self, user_id: int) -> Dialog | None:
+    async def get_dialog_async(self, user_id: int) -> Dialog | None:
         """Получает диалог пользователя.
 
         Сначала проверяет кэш, при отсутствии загружает из БД.
@@ -97,8 +98,8 @@ class DialogService:
                 self._dialogs.move_to_end(user_id)
                 return dialog
 
-        # Чтение из БД вне блокировки
-        data = db.get_dialog(user_id)
+        # Чтение из БД вне блокировки (асинхронно)
+        data = await db.get_dialog(user_id)
         if not data:
             return None
 
@@ -107,7 +108,7 @@ class DialogService:
             last_active=data['last_active'],
             state=data['state'],
             context=data['context'],
-            history=db.get_messages(user_id),
+            history=await db.get_messages(user_id),
             max_history_messages=self.max_history_messages
         )
 
@@ -117,20 +118,20 @@ class DialogService:
 
         return dialog
 
-    def save_dialog(self, dialog: Dialog):
+    async def save_dialog_async(self, dialog: Dialog):
         """Сохраняет диалог в БД.
 
         Args:
             dialog: Диалог для сохранения
         """
-        db.save_dialog(
+        await db.save_dialog(
             user_id=dialog.user_id,
             last_active=dialog.last_active,
             state=dialog.state,
             context=dialog.context
         )
 
-    def add_message(self, user_id: int, role: str, text: str) -> None:
+    async def add_message_async(self, user_id: int, role: str, text: str) -> None:
         """Добавляет сообщение в диалог.
 
         Сохраняет сообщение в БД и синхронизирует с кэшем.
@@ -140,7 +141,7 @@ class DialogService:
             role: Роль (user или bot)
             text: Текст сообщения
         """
-        db.add_message(user_id, role, text, self.max_history_messages)
+        await db.add_message(user_id, role, text, self.max_history_messages)
         # Синхронизировать с кэшем в памяти
         with self._lock:
             if user_id in self._dialogs:

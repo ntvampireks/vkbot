@@ -1,5 +1,6 @@
+import re
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -54,6 +55,40 @@ class Settings(BaseSettings):
     llm_base_url: str = Field(..., min_length=1, description='URL OpenAI-совместимого API')
     llm_api_key: str = Field('', description='API ключ для LLM сервиса')
     llm_model_name: str = Field('qwen', description='Имя модели для классификации')
+    llm_timeout: float = Field(30.0, ge=1.0, le=300.0, description='Таймаут LLM запросов в секундах')
+    llm_connect_timeout: float = Field(5.0, ge=1.0, le=60.0, description='Таймаут подключения к LLM в секундах')
+
+    @field_validator('llm_base_url')
+    @classmethod
+    def validate_llm_url(cls, v: str) -> str:
+        """Валидирует LLM URL.
+
+        Проверяет:
+        - URL начинается с http:// или https://
+        - Не указывает на приватные/internal сети (защита от SSRF)
+        """
+        if not v:
+            raise ValueError('LLM URL не может быть пустым')
+
+        # Проверка scheme
+        if not (v.startswith('http://') or v.startswith('https://')):
+            raise ValueError('LLM URL должен начинаться с http:// или https://')
+
+        # Проверка на доступ к внутренним сетям (SSRF защита)
+        private_patterns = [
+            r'^https?://10\.',                    # Private range 10.0.0.0/8
+            r'^https?://172\.(1[6-9]|2[0-9]|3[0-1])\.',  # Private range 172.16.0.0/12
+            r'^https?://127\.',                   # Loopback
+            r'^https?://169\.254\.',              # Link-local (AWS metadata)
+            r'^https?://localhost',               # Localhost
+            r'^https?://0\.0\.0\.0',              # All interfaces
+        ]
+
+        for pattern in private_patterns:
+            if re.match(pattern, v, re.IGNORECASE):
+                raise ValueError('Доступ к внутренним сетям запрещён из соображений безопасности')
+
+        return v
 
     @property
     def vk_group_id_int(self) -> int:

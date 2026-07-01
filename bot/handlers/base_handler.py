@@ -33,6 +33,11 @@ class BaseHandler(ABC):
 
     @property
     @abstractmethod
+    def intent_description(self) -> str:
+        pass
+
+    @property
+    @abstractmethod
     def intent_prompt(self) -> str:
         """Описание интента для классификатора LLM.
 
@@ -40,9 +45,10 @@ class BaseHandler(ABC):
         """
         pass
 
-    @abstractmethod
-    def handle(self, message: Message, dialog: Dialog | None) -> str:
-        """Обработать сообщение и вернуть ответ.
+    async def handle_async(self, message: Message, dialog: Dialog | None) -> str:
+        """Обработать сообщение асинхронно и вернуть ответ.
+
+        По умолчанию делегирует синхронному методу.
 
         Args:
             message: входящее сообщение

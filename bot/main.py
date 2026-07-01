@@ -1,7 +1,9 @@
 """Точка входа для VK бота."""
 
+import asyncio
 import logging
 import sys
+import threading
 
 from pydantic import ValidationError
 
@@ -18,6 +20,7 @@ from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
 from bot.utils.inject import get_default_logger, get_metrics
+from bot import api
 from bot.utils.message_validator import has_mention
 from storage.db import init_db
 
@@ -37,11 +40,15 @@ def main() -> None:
         sys.exit(1)
 
     init_db()
-    start_health_server(settings)
 
     # Явная инициализация зависимостей
     logger = get_default_logger('bot')
     metrics = get_metrics()
+
+    # Передаём метрики в Health API для DI
+    api.set_metrics(metrics)
+
+    start_health_server(settings)
 
     vk_client = VKClient(settings, logger)
     rate_limiter = RateLimiter()
@@ -55,12 +62,26 @@ def main() -> None:
     llm_client = OpenAIClient(
         base_url=settings.llm_base_url,
         api_key=settings.llm_api_key,
-        model=settings.llm_model_name
+        model=settings.llm_model_name,
+        timeout=settings.llm_timeout
     )
     router = create_router(llm_client=llm_client)
     classifier = IntentClassifier(router=router, llm_client=llm_client)
 
     processor = MessageProcessor(dialog_service, message_service, router, classifier, metrics, settings, logger)
+
+    # Создаём отдельный event loop для асинхронной обработки
+    loop = asyncio.new_event_loop()
+    loop_thread = None
+
+    def run_loop():
+        nonlocal loop_thread
+        asyncio.set_event_loop(loop)
+        loop_thread = threading.current_thread()
+        loop.run_forever()
+
+    # Запускаем event loop в отдельном потоке
+    threading.Thread(target=run_loop, daemon=True).start()
 
     logger.info('Бот запущен...')
 
@@ -75,7 +96,8 @@ def main() -> None:
                 reply_to=message.id)
             return
 
-        processor.process(message)
+        # Запускаем асинхронную обработку в отдельном event loop
+        asyncio.run_coroutine_threadsafe(processor.process(message), loop)
 
     bot_user_id = -int(settings.vk_group_id_int) if settings.vk_group_id else None
     event_handler = EventHandler(on_message, bot_user_id=bot_user_id, settings=settings, logger=logger)

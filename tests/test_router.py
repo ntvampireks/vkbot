@@ -17,7 +17,8 @@ class TestCreateRouterIntegration:
         router = create_router()
         assert 'unknown' in router
 
-    def test_router_unknown_handler_can_handle_messages(self):
+    @pytest.mark.asyncio
+    async def test_router_unknown_handler_can_handle_messages(self):
         """Тестирует что unknown handler может обрабатывать сообщения."""
         router = create_router()
         unknown_handler = router['unknown']
@@ -34,11 +35,12 @@ class TestCreateRouterIntegration:
         )
 
         # Проверяем что обработчик может обработать сообщение
-        response = unknown_handler.handle(message, None)
+        response = await unknown_handler.handle_async(message, None)
         assert isinstance(response, str)
         assert len(response) > 0
 
-    def test_router_unknown_handler_response_content(self):
+    @pytest.mark.asyncio
+    async def test_router_unknown_handler_response_content(self):
         """Тестирует содержимое ответа от unknown handler."""
         router = create_router()
         unknown_handler = router['unknown']
@@ -53,7 +55,7 @@ class TestCreateRouterIntegration:
             out=0
         )
 
-        response = unknown_handler.handle(message, None)
+        response = await unknown_handler.handle_async(message, None)
 
         # Проверяем что ответ содержит подсказку
         assert 'хоть' in response.lower() or 'help' in response.lower() or 'переформулировать' in response.lower()
@@ -68,15 +70,16 @@ class TestCreateRouterIntegration:
             assert isinstance(intent, str)
             assert len(intent) > 0
 
-    def test_router_handlers_have_handle_method(self):
-        """Тестирует что все обработчики имеют метод handle."""
+    def test_router_handlers_have_handle_async_method(self):
+        """Тестирует что все обработчики имеют метод handle_async."""
         router = create_router()
 
         for intent, handler in router.items():
-            assert hasattr(handler, 'handle')
-            assert callable(handler.handle)
+            assert hasattr(handler, 'handle_async')
+            assert callable(handler.handle_async)
 
-    def test_router_greeting_handler_exists_if_registered(self):
+    @pytest.mark.asyncio
+    async def test_router_greeting_handler_exists_if_registered(self):
         """Тестирует что если есть greeting handler, он работает корректно."""
         router = create_router()
 
@@ -92,10 +95,11 @@ class TestCreateRouterIntegration:
                 attachments=[],
                 out=0
             )
-            response = handler.handle(message, None)
+            response = await handler.handle_async(message, None)
             assert isinstance(response, str)
 
-    def test_router_help_handler_exists_if_registered(self):
+    @pytest.mark.asyncio
+    async def test_router_help_handler_exists_if_registered(self):
         """Тестирует что если есть help handler, он работает корректно."""
         router = create_router()
 
@@ -111,7 +115,7 @@ class TestCreateRouterIntegration:
                 attachments=[],
                 out=0
             )
-            response = handler.handle(message, None)
+            response = await handler.handle_async(message, None)
             assert isinstance(response, str)
 
     def test_router_handler_intent_matches_key(self):

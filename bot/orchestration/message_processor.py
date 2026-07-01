@@ -53,8 +53,8 @@ class MessageProcessor:
         self._settings = settings
         self._logger = logger or get_default_logger(__name__)
 
-    def process(self, message: Message) -> None:
-        """Обработать входящее сообщение и отправить ответ.
+    async def process(self, message: Message) -> None:
+        """Обработать входящее сообщение и отправить ответ (асинхронно).
 
         Args:
             message: Входящее сообщение
@@ -63,22 +63,22 @@ class MessageProcessor:
 
         start_time = time.time()
         try:
-            dialog = self._prepare_dialog_context(message)
-            response = self._handle_message(message, dialog)
+            dialog = await self._prepare_dialog_context(message)
+            response = await self._handle_message(message, dialog)
 
             if self._send_response(message, response):
                 self.metrics.inc_counter('messages_sent_total')
 
-            self._finalize_message(message, response)
+            await self._finalize_message(message, response)
             self.metrics.record_processing_time(time.time() - start_time)
         except Exception:
             self._logger.error(f'Ошибка обработки сообщения:\n{traceback.format_exc()}')
             self.metrics.record_message_error()
             raise
 
-    def _prepare_dialog_context(self, message: Message) -> Dialog:
+    async def _prepare_dialog_context(self, message: Message) -> Dialog:
         """Получить или создать диалог для пользователя."""
-        dialog = self.dialog_service.get_dialog(message.user_id)
+        dialog = await self.dialog_service.get_dialog_async(message.user_id)
 
         if dialog is None:
             dialog = Dialog(
@@ -90,13 +90,13 @@ class MessageProcessor:
 
         return dialog
 
-    def _handle_message(self, message: Message, dialog: Dialog) -> str:
-        """Определить intent, вызвать обработчик и вернуть ответ."""
-        intent = self.classifier.classify(message)
+    async def _handle_message(self, message: Message, dialog: Dialog) -> str:
+        """Определить intent, вызвать обработчик и вернуть ответ (асинхронно)."""
+        intent = await self.classifier.classify_async(message)
         handler = self.router.get(intent, self.router.get('unknown'))
 
         try:
-            return handler.handle(message, dialog)
+            return await handler.handle_async(message, dialog)
         except Exception:
             self._logger.exception(f'Ошибка в обработчике {intent}:')
             return 'Извините, произошла ошибка при обработке запроса.'
@@ -106,8 +106,8 @@ class MessageProcessor:
         self._logger.debug(f'Отправка ответа: peer_id={message.peer_id}, reply_to={message.id}')
         return self.message_service.send(message.peer_id or message.user_id, response, reply_to=message.id)
 
-    def _finalize_message(self, message: Message, response: str) -> None:
+    async def _finalize_message(self, message: Message, response: str) -> None:
         """Сохранить историю сообщений и состояние диалога."""
         safe_text = sanitize_text(message.text, settings=self._settings)
-        self.dialog_service.add_message(message.user_id, 'user', safe_text)
-        self.dialog_service.add_message(message.user_id, 'bot', response)
+        await self.dialog_service.add_message_async(message.user_id, 'user', safe_text)
+        await self.dialog_service.add_message_async(message.user_id, 'bot', response)
