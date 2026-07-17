@@ -1,5 +1,6 @@
 """IntentClassifier с LLM-классификацией и Pydantic валидацией."""
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, create_model
@@ -76,7 +77,7 @@ class IntentClassifier:
 
 Верни ТОЛЬКО JSON объект с полем "intent".'''
 
-        user_prompt = f'Сообщение: "{user_text}"'
+        user_prompt = f'Сообщение: {json.dumps(user_text, ensure_ascii=False)}'
 
         return [
             {'role': 'system', 'content': system_prompt},

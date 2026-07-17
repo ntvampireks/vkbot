@@ -221,7 +221,10 @@ vk_client.run_forever(processor.process)
 | `DialogService` | `Settings`, `Logger` | Конфигурация кэша, логирование |
 | `MessageService` | `VKClient`, `RateLimiter`, `Settings`, `Logger` | Отправка через VK, rate limiting |
 | `MessageProcessor` | `DialogService`, `MessageService`, `Router`, `Metrics`, `Settings`, `Logger` | Оркестрация всего потока |
-| `IntentClassifier` | — | Не имеет зависимостей (stateless) |
+| `IntentClassifier` | `Router`, `OpenAIClient` | Классификация интентов через LLM |
+| `OpenAIClient` | — | Клиент для OpenAI-совместимых API (синхронный/асинхронный) |
+| `RateLimiter` | `Logger` | Глобальное ограничение частоты отправки |
+| `MessageSender` | `VKClient`, `RateLimiter`, `MessageQueue`, `Settings`, `Logger` | Фоновая отправка с ретраями |
 
 #### Преимущества DI в этом проекте
 
@@ -267,6 +270,123 @@ my_new_service = MyNewService(dialog_service=dialog_service, logger=logger)
 # 3. Передайте туда, где нужен
 processor = MessageProcessor(..., custom_service=my_new_service)
 ```
+
+## Тестирование
+
+### Структура тестов
+
+```
+tests/
+├── test_deduplication.py        # Тесты MessageDeduplicator (7 тестов)
+├── test_per_user_limiter.py     # Тесты PerUserRateLimiter (15 тестов)
+├── test_rate_limiter.py         # Тесты RateLimiter (5 тестов)
+├── test_dialog.py               # Тесты Dialog домена (14 тестов)
+├── test_message.py              # Тесты Message домена (4 теста)
+├── test_message_queue.py        # Тесты MessageQueue (10 тестов)
+├── test_message_sender.py       # Тесты MessageSender (10 тестов)
+├── test_message_validator.py    # Тесты валидации (37 тестов)
+├── test_intent_classifier.py    # Тесты классификатора (15 тестов)
+├── test_handlers.py             # Тесты обработчиков (9 тестов)
+└── test_router.py               # Тесты роутера (11 тестов)
+```
+
+### Покрытие тестами
+
+| Модуль | Статус | Примечание |
+|--------|--------|------------|
+| `MessageDeduplicator` | ✅ | 7 тестов |
+| `PerUserRateLimiter` | ✅ | 15 тестов, включая потокобезопасность |
+| `RateLimiter` | ✅ | 5 тестов |
+| `Dialog` | ✅ | 14 тестов, включая concurrent access |
+| `Message` | ✅ | 4 теста |
+| `MessageQueue` | ✅ | 10 тестов |
+| `MessageSender` | ✅ | 10 тестов |
+| `message_validator` | ✅ | 37 тестов, включая prompt injection |
+| `IntentClassifier` | ✅ | 15 тестов с моками LLM |
+| `Handlers` | ✅ | 9 тестов |
+| `router` | ✅ | 11 тестов |
+| `VKClient` | ❌ | Критический gap — нет тестов |
+| `EventHandler` | ❌ | Критический gap — нет тестов |
+| `MessageProcessor` | ❌ | Критический gap — нет тестов |
+| `DialogService` | ❌ | Нет тестов с реальной БД |
+| `storage.db` | ❌ | Нет тестов CRUD операций |
+| `OpenAIClient` | ❌ | Нет тестов |
+
+### Рекомендации по тестированию
+
+1. **Критические приоритеты** — добавить тесты для:
+   - `test_vk_client.py` — VK API клиент с моками
+   - `test_event_handler.py` — фильтрация событий
+   - `test_message_processor.py` — интеграционные тесты полного потока
+   - `tests/storage/test_db.py` — тесты SQLite с временной БД
+
+2. **Интеграционные тесты** — тестировать взаимодействие компонентов:
+   - Полный поток от получения сообщения до отправки ответа
+   - Взаимодействие с реальной БД
+
+3. **Edge cases** — покрыть тестами:
+   - Экстремально длинные сообщения
+   - Unicode символы и emoji
+   - Параллельные запросы от одного пользователя
+   - Ошибки VK API и БД
+
+## Безопасность
+
+### Реализованные защиты
+
+| Защита | Файл | Описание |
+|--------|------|----------|
+| SSRF защита | [bot/config.py](bot/config.py) | Блокировка доступа к internal networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, localhost) |
+| Prompt injection | [bot/utils/message_validator.py](bot/utils/message_validator.py) | Паттерны для обнаружения атак на английском и русском |
+| Rate limiting | [bot/services/rate_limiter.py](bot/services/rate_limiter.py) + [bot/utils/per_user_limiter.py](bot/utils/per_user_limiter.py) | Глобальный (~3 msg/sec) и per-user лимиты |
+| Дедупликация | [bot/utils/deduplication.py](bot/utils/deduplication.py) | Предотвращение обработки дубликатов сообщений |
+| Валидация ввода | [bot/utils/message_validator.py](bot/utils/message_validator.py) | Санитизация текста, проверка длины |
+
+### Меры предосторожности
+
+- **SSRF проверка** — перед отправкой запросов к внешним URL проверяется, что адрес не принадлежит внутренним сетям
+- **Prompt injection detection** — регулярные выражения для обнаружения попыток переопределения инструкций
+- **Input sanitization** — удаление управляющих символов и invisible characters
+
+### Рекомендации
+
+1. Добавить аутентификацию к Health API endpoints (`/health`, `/ready`, `/metrics`)
+2. Не логировать полный текст при обнаружении атак — логировать только хэш или обрезанную версию
+3. Использовать `secrets` вместо `random` для генерации `random_id`
+4. Добавить CORS middleware для FastAPI
+
+## Поводительность
+
+### Ключевые метрики
+
+| Метрика | Описание |
+|---------|----------|
+| `messages_received_total` | Всего получено сообщений |
+| `messages_sent_total` | Всего отправлено сообщений |
+| `message_errors_total` | Ошибки при обработке |
+| `message_processing_seconds` | Время обработки сообщения |
+| `response_send_seconds_current` | Время отправки ответа |
+| `uptime_seconds` | Время работы бота |
+
+### Доступные endpoints
+
+| Endpoint | Описание |
+|----------|----------|
+| `/health` | Статус здоровья бота с метриками |
+| `/ready` | Готовность к работе |
+| `/metrics` | Метрики в формате Prometheus |
+
+### Оптимизации
+
+- **LRU-кэширование** — DialogService кэширует активные диалоги в памяти
+- **Фоновая отправка** — MessageSender работает в отдельном потоке с экспоненциальным backoff
+- **Асинхронная БД** — aiosqlite для неблокирующего доступа
+
+### Известные bottlenecks
+
+1. **SQLite** — нет пула соединений, каждое обращение создаёт новое соединение
+2. **LLM классификация** — каждый запрос идёт к LLM (2-10 секунд), нет кэширования
+3. **Блокирующий код** — `time.sleep()` в `VKClient._sleep_interruptible()` блокирует event loop
 
 ## Поведенческие руководства (из AGENTS.md)
 

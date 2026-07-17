@@ -2,7 +2,7 @@ import vk_api
 from vk_api.longpoll import VkLongPoll
 from vk_api.exceptions import AccessDenied, AuthError, ApiError
 from typing import Callable, NoReturn
-import random
+import secrets
 import time
 import logging
 import requests
@@ -111,7 +111,7 @@ class VKClient:
             params = {
                 'peer_id': peer_id,
                 'message': text,
-                'random_id': random.randint(0, 2**31 - 1),
+                'random_id': secrets.randbelow(2**31),
                 'timeout': timeout,
             }
             if reply_to is not None:

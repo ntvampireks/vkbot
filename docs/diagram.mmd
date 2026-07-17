@@ -4,14 +4,15 @@ graph TB
     end
 
     subgraph "Core Layer"
-        EH[EventHandler.handle_event]
+        EH[EventHandler.handle_event<br/>bot/core/event_handler.py]
         MD[MessageDeduplicator<br/>bot/utils/deduplication.py]
         PRL[PerUserRateLimiter<br/>bot/utils/per_user_limiter.py]
+        PI[prompt_injection_check<br/>bot/utils/message_validator.py]
         SM[sanitize_text<br/>bot/utils/message_validator.py]
         MSG[Message.from_vk_event<br/>bot/domains/message.py]
     end
 
-    subgraph "Callback Layer (main.py)"
+    subgraph "Callback Layer (bot/main.py)"
         CB[on_message callback]
         CM[has_mention<br/>проверка упоминания бота]
         CA[проверка вложений<br/>отклонение с ответом]
@@ -26,18 +27,25 @@ graph TB
     end
 
     subgraph "Processing Layer"
-        IC[IntentClassifier.classify<br/>bot/services/intent_classifier.py]
-        RT[Router<br/>bot/orchestration/router.py]
+        IC[IntentClassifier.classify_async<br/>bot/services/intent_classifier.py]
+        RT[Router<br/>bot/orchestration/router.py<br/>автоматическая регистрация]
+        ICM[IntentResult<br/>Pydantic Literal model]
     end
 
     subgraph "Handlers"
         GH[GreetingHandler<br/>bot/handlers/greeting_handler.py]
         HH[HelpHandler<br/>bot/handlers/help_handler.py]
         DH[DefaultHandler<br/>bot/handlers/default_handler.py]
+        TH[ThrowDiceHandler<br/>bot/handlers/throw_dice_handler.py]
+    end
+
+    subgraph "Domain Layer"
+        DLM[Dialog<br/>user_id, history, context<br/>threading.Lock]
+        MSGD[Message<br/>user_id, peer_id, text, timestamp]
     end
 
     subgraph "Persistence Layer"
-        DS[DialogService<br/>bot/services/dialog_service.py]
+        DS[DialogService<br/>LRU cache + SQLite]
         DBD[db.save_dialog<br/>storage/db.py]
         DBA[db.add_message<br/>storage/db.py]
         DBM[db.get_dialog<br/>storage/db.py]
@@ -46,19 +54,27 @@ graph TB
 
     subgraph "Messaging Layer"
         MS[MessageService<br/>bot/services/message_service.py]
-        MQ[MessageQueue<br/>bot/services/message_queue.py]
-        MST[MessageSender<br/>bot/services/message_sender.py]
+        MQ[MessageQueue<br/>threading.Queue]
+        MST[MessageSender<br/>фоновый поток]
         VKS[VKClient.send_message<br/>bot/core/vk_client.py]
         RL[RateLimiter<br/>bot/services/rate_limiter.py]
     end
 
+    subgraph "LLM Layer"
+        OAI[OpenAIClient<br/>bot/core/openai_client.py<br/>sync + async]
+    end
+
     subgraph "Monitoring"
         MET[MetricsCollector<br/>bot/utils/metrics.py]
-        HS[Health Server<br/>bot/api.py]
+        HS[Health API<br/>bot/api.py]
     end
 
     subgraph "Lifecycle"
         SH[graceful_shutdown<br/>bot/lifecycle/shutdown.py]
+    end
+
+    subgraph "Configuration"
+        CFG[Settings<br/>bot/config.py<br/>Pydantic + SSRF validation]
     end
 
     %% Main flow
@@ -66,21 +82,25 @@ graph TB
     EH --> MSG
     MSG --> MD
 
-    MD -->|duplicate?| D1{{да}}
+    MD -->|duplicate?| D1{{проверка}}
     D1 -->|да| END1[игнорировать]
     D1 -->|нет| PRL
 
     PRL -->|limit?| D2{{превышен?}}
     D2 -->|да| END2[игнорировать]
-    D2 -->|нет| SM
+    D2 -->|нет| MSG2[Message объект]
 
-    SM -->|sanitize| MSG2[Message объект]
-    MSG2 --> CB
+    MSG2 --> PI
+    PI -->|injection?| END3[отклонить]
+    PI -->|чисто| SM
+
+    SM -->|sanitize| MSG3[валидированное сообщение]
+    MSG3 --> CB
 
     CB --> CM
     CM -->|не упомянут| SKIP[пропустить]
     CM -->|упомянут| CA
-    CA -->|есть вложения| RESP1[ответ о неподдержке вложений]
+    CA -->|есть вложения| RESP1[ответ о неподдержке]
     CA -->|нет вложений| PM1
 
     %% MessageProcessor flow
@@ -88,24 +108,33 @@ graph TB
     MET -.->|record_message_received| PM1
     PM1 --> PM2
 
-    PM2 -->|get_dialog| DS
-    DS -->|кэш или| DBM
-    DBM --> PM2A[Dialog контекст]
+    PM2 -->|get_dialog_async| DS
+    DS -->|кэш hit| DS_CACHED[Dialog из кэша]
+    DS -->|кэш miss| DBM
+    DBM --> DBH
+    DBH --> DS_CACHED
+    DS_CACHED --> PM2A[Dialog контекст]
     PM2 --> PM2A
 
     PM2A --> PM3
 
     PM3 --> IC
-    IC -->|classify| RT
-    RT -->|handler| H{{выбор}}
+    IC -->|build_prompt| RT
+    RT -->|intents list| IC
+    IC -->|classify_async| OAI
+    OAI -->|structured output| ICM
+    ICM -->|intent| RT
+    RT -->|router.get| H{{выбор обработчика}}
 
     H -->|greeting| GH
     H -->|help| HH
     H -->|unknown| DH
+    H -->|throw_dice| TH
 
-    GH --> RES[response]
+    GH --> RES[ResponseText]
     HH --> RES
     DH --> RES
+    TH --> RES
 
     RES --> PM4
     PM4 -->|send| MS
@@ -115,36 +144,58 @@ graph TB
     RL --> VKS
 
     VKS -->|success| MET2[record_message_sent]
-    VKS -->|error| RETRY[retry attempt]
+    VKS -->|error| RETRY[exponential backoff]
     RETRY -->|attempts < max| MST
     RETRY -->|attempts = max| MET3[record_message_error]
 
     MET2 --> LOG[логирование]
     MET3 --> LOGERR[логирование ошибки]
 
-    PM5 -->|user| DBA
-    PM5 -->|bot| DBA2[db.add_message]
+    PM5 -->|user message| DBA
+    PM5 -->|bot response| DBA2[db.add_message]
+    PM5 -->|save dialog| DBD
 
     %% Health API
     HS -->|/health| STATUS[статус + метрики]
     HS -->|/ready| READY[готовность]
-    HS -->|/metrics| PROM[Prometheus формат]
+    HS -->|/metrics| PROM[Prometheus format]
 
     %% Signal handlers
     SIG[SIGINT/SIGTERM] --> SH
     SH -->|stop| MST
-    SH -->|stop| VK
+    SH -->|disconnect| VK
+
+    %% Dependency Injection from main.py
+    CFG -.-> EH
+    CFG -.-> DS
+    CFG -.-> MS
+    CFG -.-> OAI
+    OAI -.-> IC
+    IC -.-> RT
+    MET -.-> PM1
+    MET -.-> HS
+    DLM -.-> DS
 
     %% Styling
     style VK fill:#e1f5ff
     style MSG fill:#fff3e0
+    style MSGD fill:#fff3e0
     style CB fill:#fff3e0
     style IC fill:#f3e5f5
+    style OAI fill:#f3e5f5
     style RT fill:#f3e5f5
+    style ICM fill:#f3e5f5
     style RES fill:#e8f5e9
+    style GH fill:#e8f5e9
+    style HH fill:#e8f5e9
+    style DH fill:#e8f5e9
+    style TH fill:#e8f5e9
+    style DLM fill:#e8f5e9
+    style DS fill:#fff8e1
     style DBD fill:#fff8e1
     style DBA fill:#fff8e1
     style DBM fill:#fff8e1
+    style DBH fill:#fff8e1
     style VKS fill:#ffebee
     style MET fill:#f1f8e9
     style PM1 fill:#f0f4c3
@@ -154,3 +205,4 @@ graph TB
     style PM5 fill:#f0f4c3
     style HS fill:#e8eaf6
     style SH fill:#ffebee
+    style CFG fill:#e0f2f1

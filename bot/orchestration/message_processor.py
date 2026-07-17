@@ -7,7 +7,6 @@ from typing import Any
 
 from bot.domains.message import Message
 from bot.domains.dialog import Dialog
-from bot.utils.message_validator import sanitize_text
 from bot.services.dialog_service import DialogService
 from bot.services.message_service import MessageService
 from bot.services.intent_classifier import IntentClassifier
@@ -107,7 +106,6 @@ class MessageProcessor:
 
     async def _finalize_message(self, message: Message, dialog: Dialog, response: str) -> None:
         """Сохранить историю сообщений и состояние диалога."""
-        safe_text = sanitize_text(message.text, settings=self._settings)
-        await self.dialog_service.add_message_async(message.user_id, 'user', safe_text)
+        await self.dialog_service.add_message_async(message.user_id, 'user', message.text)
         await self.dialog_service.add_message_async(message.user_id, 'bot', response)
         await self.dialog_service.save_dialog_async(dialog)
