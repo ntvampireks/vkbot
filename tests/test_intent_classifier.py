@@ -143,32 +143,40 @@ class TestIntentClassifier:
 
     # --- Тесты для has_mention() ---
 
+    @staticmethod
+    def mention_settings(bot_name: str = 'vkbot', group_id: str = '123456') -> Mock:
+        """Конфигурация с заданным именем и ID сообщества."""
+        settings = Mock()
+        settings.vk_bot_name = bot_name
+        settings.vk_group_id = group_id
+        return settings
+
     def test_has_mention_simple(self):
         """Простое упоминание @имя."""
         message = self.create_message("@vkbot привет")
-        assert has_mention(message, "vkbot") is True
+        assert has_mention(message, self.mention_settings()) is True
 
     def test_has_mention_with_id(self):
         """Упоминание с ID @имя(123456)."""
         message = self.create_message("@vkbot(123456) привет")
-        assert has_mention(message, "vkbot") is True
+        assert has_mention(message, self.mention_settings()) is True
 
     def test_has_mention_case_insensitive(self):
         """Регистронезависимость упоминания."""
         message = self.create_message("@VKBOT привет")
-        assert has_mention(message, "vkbot") is True
+        assert has_mention(message, self.mention_settings()) is True
 
     def test_has_mention_not_mentioned(self):
         """Без упоминания."""
         message = self.create_message("привет всем")
-        assert has_mention(message, None) is False
+        assert has_mention(message, self.mention_settings()) is False
 
     def test_has_mention_with_numbers_in_name(self):
         """Упоминание с цифрами в имени бота."""
         message = self.create_message("@vkbot123 привет")
-        assert has_mention(message, "vkbot") is True
+        assert has_mention(message, self.mention_settings(bot_name='vkbot123')) is True
 
-    def test_has_mention_no_bot_name(self):
-        """Пустое имя бота."""
+    def test_has_mention_other_bot_name(self):
+        """Упоминание с другим именем — не про нас."""
         message = self.create_message("@bot привет")
-        assert has_mention(message, None) is False
+        assert has_mention(message, self.mention_settings()) is False

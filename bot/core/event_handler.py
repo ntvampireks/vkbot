@@ -52,7 +52,7 @@ class EventHandler:
         Выполняет фильтрацию событий:
         - Пропускает не MESSAGE_NEW события
         - Пропускает сообщения от бота
-        - Пропускает дубликаты (по message_id)
+        - Пропускает дубликаты (по паре peer_id + message_id)
         - Пропускает сообщения от пользователей превысивших лимит
         - Валидирует и санитизирует текст
 
@@ -67,6 +67,7 @@ class EventHandler:
             return
 
         message_id = event.get("message_id", 0)
+        peer_id = event.get("peer_id", 0)
         user_id = event.get("user_id", 0)
 
         # Пропускаем сообщения от бота (по user_id)
@@ -75,8 +76,8 @@ class EventHandler:
             self._logger.info(f'Сообщение от бота {message_id}, пропускаем')
             return
 
-        if self.deduplicator.is_duplicate(message_id):
-            self._logger.debug(f'Дубликат события, пропускаем: message_id={message_id}')
+        if self.deduplicator.is_duplicate(peer_id, message_id):
+            self._logger.debug(f'Дубликат события, пропускаем: peer_id={peer_id} message_id={message_id}')
             return
 
         # Проверка per-user rate limiter (атомарная операция)

@@ -40,7 +40,7 @@ class GreetingHandler(BaseHandler):
         if self._llm_client is None:
             return 'Здравствуйте! Я бот сообщества VK. Чем могу помочь?'
 
-        user_text = message.text.replace('@бот', '').replace('@Бот', '') or ''
+        user_text = message.text.strip()
         messages = [
             {'role': 'system', 'content': self.intent_prompt},
             {'role': 'user', 'content': f'Игрок: {user_text}'}

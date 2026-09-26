@@ -123,24 +123,52 @@ def validate_message(text: str, settings: Settings) -> tuple[bool, str]:
     return True, ''
 
 
-def has_mention(message: Message, bot_name: str | None = None) -> bool:
+def _mention_pattern(settings: Settings) -> str:
+    """Собирает regex упоминания бота по имени и ID сообщества из .env.
+
+    VK отдаёт упоминание сообщества в текстовом виде в формах
+    `@club<id> (Имя)` и `@[club<id>|Имя]`; введённое руками `@Имя`
+    (и `@Имя(123456)`) тоже поддерживается.
+    """
+    club = re.escape(str(settings.vk_group_id).lstrip('-'))
+    name = re.escape(settings.vk_bot_name)
+
+    return (
+        rf'@\[club{club}\|[^\]]*\]'              # @[club123|Имя]
+        rf'|@club{club}(?!\d)(?:\s*\([^)]*\))?'  # @club123 или @club123 (Имя)
+        rf'|@{name}(?![\w])(?:\(\d+\))?'         # @Имя или @Имя(123456)
+    )
+
+
+def has_mention(message: Message, settings: Settings) -> bool:
     """Проверка, упомянут ли бот в сообщении.
 
     Args:
         message: Сообщение от пользователя
-        bot_name: Имя бота для поиска упоминания
+        settings: Конфигурация: vk_bot_name и vk_group_id из .env
 
     Returns:
-        True если бот упомянут в формате @имя или @имя(123456)
+        True если бот упомянут
     """
-    if not bot_name:
-        return False
-
     text = message.text or ''
     if not text.strip():
         return False
 
-    bot_name_lower = bot_name.lower()
-    # Ищем упоминание в формате @имя или @имя(123456), игнорируя регистр
-    pattern = rf'@{re.escape(bot_name_lower)}(\d+)?'
-    return bool(re.search(pattern, text, re.IGNORECASE))
+    return bool(re.search(_mention_pattern(settings), text, re.IGNORECASE))
+
+
+def strip_mention(text: str, settings: Settings) -> str:
+    """Убирает упоминание бота из текста, чтобы оно не попадало в промпты.
+
+    Args:
+        text: Исходный текст сообщения
+        settings: Конфигурация: vk_bot_name и vk_group_id из .env
+
+    Returns:
+        Текст без упоминания
+    """
+    if not text:
+        return ''
+
+    cleaned = re.sub(_mention_pattern(settings), '', text, flags=re.IGNORECASE)
+    return re.sub(r' {2,}', ' ', cleaned).strip()

@@ -17,40 +17,47 @@ class TestMessageDeduplicator:
     def test_first_message_not_duplicate(self):
         """Первое сообщение не дубликат."""
         dedup = MessageDeduplicator()
-        assert dedup.is_duplicate(123) is False
+        assert dedup.is_duplicate(peer_id=1, message_id=123) is False
 
     def test_same_message_is_duplicate(self):
-        """Повторное сообщение с тем же ID — дубликат."""
+        """Повторное сообщение с тем же ID в том же диалоге — дубликат."""
         dedup = MessageDeduplicator()
-        dedup.is_duplicate(123)  # Первое раз — не дубликат
-        assert dedup.is_duplicate(123) is True  # Второе раз — дубликат
+        dedup.is_duplicate(peer_id=1, message_id=123)  # Первое раз — не дубликат
+        assert dedup.is_duplicate(peer_id=1, message_id=123) is True  # Второе раз — дубликат
+
+    def test_same_message_id_in_different_dialogs_is_not_duplicate(self):
+        """message_id уникален только в пределах диалога, поэтому ключом кэша
+        должна быть пара (peer_id, message_id)."""
+        dedup = MessageDeduplicator()
+        assert dedup.is_duplicate(peer_id=111, message_id=150) is False
+        assert dedup.is_duplicate(peer_id=222, message_id=150) is False
 
     def test_different_messages_not_duplicates(self):
         """Разные ID — не дубликаты."""
         dedup = MessageDeduplicator()
-        assert dedup.is_duplicate(123) is False
-        assert dedup.is_duplicate(456) is False
-        assert dedup.is_duplicate(789) is False
+        assert dedup.is_duplicate(peer_id=1, message_id=123) is False
+        assert dedup.is_duplicate(peer_id=1, message_id=456) is False
+        assert dedup.is_duplicate(peer_id=1, message_id=789) is False
 
     def test_old_messages_expire(self):
         """Устаревшие сообщения истекают."""
         dedup = MessageDeduplicator(ttl_seconds=0.2)
 
-        dedup.is_duplicate(123)
-        assert dedup.is_duplicate(123) is True
+        dedup.is_duplicate(peer_id=1, message_id=123)
+        assert dedup.is_duplicate(peer_id=1, message_id=123) is True
 
         # Ждём пока истечёт TTL
         time.sleep(0.25)
 
         # После истечения — не дубликат
-        assert dedup.is_duplicate(123) is False
+        assert dedup.is_duplicate(peer_id=1, message_id=123) is False
 
     def test_cache_grows_with_new_messages(self):
         """Кэш ограничивается max_size при новых сообщениях."""
         dedup = MessageDeduplicator(max_size=5, ttl_seconds=300)
 
         for i in range(10):
-            dedup.is_duplicate(i)
+            dedup.is_duplicate(peer_id=1, message_id=i)
 
         # Кэш ограничен до max_size=5 (старые записи удаляются)
         assert len(dedup._cache) == 5
@@ -64,7 +71,7 @@ class TestMessageDeduplicator:
         lock = threading.Lock()
 
         def check_duplicate(msg_id):
-            result = dedup.is_duplicate(msg_id)
+            result = dedup.is_duplicate(peer_id=1, message_id=msg_id)
             with lock:
                 results.append(result)
 

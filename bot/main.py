@@ -20,7 +20,7 @@ from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
 from bot import api
-from bot.utils.message_validator import has_mention
+from bot.utils.message_validator import has_mention, strip_mention
 from storage.db import init_db
 
 logger = logging.getLogger(__name__)
@@ -86,9 +86,13 @@ def main() -> None:
     logger.info('Бот запущен...')
 
     def on_message(message: Message):
-        if not has_mention(message, settings.vk_bot_name):
+        if not has_mention(message, settings):
             logger.debug('Бот не упомянут, пропускаем')
             return
+
+        # Упоминание вырезается один раз здесь, чтобы обработчики
+        # работали с текстом запроса без служебных вставок VK
+        message.text = strip_mention(message.text, settings)
 
         if message.attachments:
             message_service.send(message.peer_id or message.user_id,

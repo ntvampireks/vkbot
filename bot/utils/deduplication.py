@@ -16,19 +16,32 @@ class MessageDeduplicator:
             max_size: Максимальный размер кэша
             ttl_seconds: TTL записей в секундах
         """
-        self._cache = OrderedDict()
+        # Ключ — пара (peer_id, message_id), значение — время обработки
+        self._cache: OrderedDict[tuple[int, int], float] = OrderedDict()
         self._max_size = max_size
         self._ttl = ttl_seconds
         self._lock = Lock()
 
-    def is_duplicate(self, message_id: int) -> bool:
-        """Проверяет, был ли уже обработан этот message_id."""
+    def is_duplicate(self, peer_id: int, message_id: int) -> bool:
+        """Проверяет, было ли уже обработано это сообщение.
+
+        message_id уникален только в пределах диалога, поэтому ключом кэша
+        выступает пара (peer_id, message_id).
+
+        Args:
+            peer_id: ID диалога
+            message_id: ID сообщения внутри диалога
+
+        Returns:
+            True если сообщение уже обрабатывалось
+        """
+        key = (peer_id, message_id)
         with self._lock:
             now = time.time()
 
             # Удаляем устаревшие записи
             while self._cache:
-                oldest_id, oldest_time = next(iter(self._cache.items()))
+                oldest_key, oldest_time = next(iter(self._cache.items()))
                 if oldest_time < now - self._ttl:
                     self._cache.popitem(last=False)
                 else:
@@ -36,15 +49,15 @@ class MessageDeduplicator:
 
             # Удаляем старые записи, если кэш превышает max_size
             while len(self._cache) >= self._max_size:
-                oldest_id, _ = next(iter(self._cache.items()))
-                self._cache.pop(oldest_id)
-                logger.debug(f'Кэш полон, удаляем oldest_id={oldest_id}')
+                oldest_key, _ = next(iter(self._cache.items()))
+                self._cache.pop(oldest_key)
+                logger.debug(f'Кэш полон, удаляем oldest_key={oldest_key}')
 
-            # Проверяем, есть ли message_id в кэше
-            if message_id in self._cache:
-                logger.debug(f'Дубликат сообщения, пропускаем: id={message_id}')
+            # Проверяем, есть ли сообщение в кэше
+            if key in self._cache:
+                logger.debug(f'Дубликат сообщения, пропускаем: peer_id={peer_id} id={message_id}')
                 return True
 
             # Добавляем в кэш
-            self._cache[message_id] = now
+            self._cache[key] = now
             return False

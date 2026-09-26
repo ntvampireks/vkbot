@@ -31,7 +31,7 @@ class DefaultHandler(BaseHandler):
         if self._llm_client is None:
             return 'Извините, я не понял ваш вопрос. Попробуйте переформулировать или обратитесь к help за помощью.'
 
-        user_text = message.text.replace('@бот', '').replace('@Бот', '') or ''
+        user_text = message.text.strip()
         messages = [
             {'role': 'system', 'content': self.intent_prompt},
             {'role': 'user', 'content': f'Игрок: {user_text}'}
