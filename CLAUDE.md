@@ -336,7 +336,7 @@ tests/
 
 | Защита | Файл | Описание |
 |--------|------|----------|
-| SSRF защита | [bot/config.py](bot/config.py) | Блокировка доступа к internal networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, localhost) |
+| SSRF защита | [bot/config.py](bot/config.py) | Блокировка доступа к internal networks (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, localhost). Пропускается при `LLM_ALLOW_PRIVATE=true` (легитимный LLM во внутренней сети) |
 | Prompt injection | [bot/utils/message_validator.py](bot/utils/message_validator.py) | Паттерны для обнаружения атак на английском и русском |
 | Rate limiting | [bot/services/rate_limiter.py](bot/services/rate_limiter.py) + [bot/utils/per_user_limiter.py](bot/utils/per_user_limiter.py) | Глобальный (~3 msg/sec) и per-user лимиты |
 | Дедупликация | [bot/utils/deduplication.py](bot/utils/deduplication.py) | Предотвращение обработки дубликатов сообщений |
@@ -350,7 +350,7 @@ tests/
 
 ### Рекомендации
 
-1. Добавить аутентификацию к Health API endpoints (`/health`, `/ready`, `/metrics`)
+1. Health API endpoints (`/health`, `/ready`, `/metrics`) — защита сетевая: `BOT_HOST` по умолчанию `localhost` (bind только на loopback), аутентификация сознательно не реализована (accepted risk). При `BOT_HOST` вне loopback бот логирует warning; если понадобится внешний мониторинг — добавить `HEALTH_TOKEN` с проверкой заголовка
 2. Не логировать полный текст при обнаружении атак — логировать только хэш или обрезанную версию
 3. Использовать `secrets` вместо `random` для генерации `random_id`
 4. Добавить CORS middleware для FastAPI

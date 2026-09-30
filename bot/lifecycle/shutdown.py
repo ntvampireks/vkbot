@@ -67,6 +67,12 @@ def start_health_server(settings: Settings) -> threading.Thread | None:
 
     cfg = settings
 
+    # Защита health API — сетевая (bind на loopback). Смена BOT_HOST молча
+    # выставляет эндпойнты в сеть без аутентификации — предупреждаем в логи.
+    if cfg.bot_host not in ('localhost', '127.0.0.1', '::1'):
+        logger.warning('Health API доступен из внешней сети без аутентификации '
+                       f'(BOT_HOST={cfg.bot_host})')
+
     def run_server() -> None:
         try:
             uvicorn.run(

@@ -52,6 +52,8 @@ class Settings(BaseSettings):
     message_queue_maxsize: int = Field(1000, ge=100, le=10000, description='Максимальный размер очереди сообщений')
 
     # Настройки LLM для IntentClassifier
+    # Объявлен ДО llm_base_url, чтобы значение был доступен в info.data валидатора
+    llm_allow_private: bool = Field(False, description='Разрешить LLM_BASE_URL в приватных сетях (LLM в internal-сети)')
     llm_base_url: str = Field(..., min_length=1, description='URL OpenAI-совместимого API')
     llm_api_key: str = Field('', description='API ключ для LLM сервиса')
     llm_model_name: str = Field('qwen', description='Имя модели для классификации')
@@ -59,12 +61,15 @@ class Settings(BaseSettings):
     
     @field_validator('llm_base_url')
     @classmethod
-    def validate_llm_url(cls, v: str) -> str:
+    def validate_llm_url(cls, v: str, info) -> str:
         """Валидирует LLM URL.
 
         Проверяет:
         - URL начинается с http:// или https://
         - Не указывает на приватные/internal сети (защита от SSRF)
+
+        Проверка приватных сетей пропускается при llm_allow_private=True
+        (легитимный случай: LLM развёрнут во внутренней сети).
         """
         if not v:
             raise ValueError('LLM URL не может быть пустым')
@@ -73,10 +78,14 @@ class Settings(BaseSettings):
         if not (v.startswith('http://') or v.startswith('https://')):
             raise ValueError('LLM URL должен начинаться с http:// или https://')
 
+        if info.data.get('llm_allow_private'):
+            return v
+
         # Проверка на доступ к внутренним сетям (SSRF защита)
         private_patterns = [
             r'^https?://10\.',                    # Private range 10.0.0.0/8
             r'^https?://172\.(1[6-9]|2[0-9]|3[0-1])\.',  # Private range 172.16.0.0/12
+            r'^https?://192\.168\.',              # Private range 192.168.0.0/16
             r'^https?://127\.',                   # Loopback
             r'^https?://169\.254\.',              # Link-local (AWS metadata)
             r'^https?://localhost',               # Localhost

@@ -118,7 +118,7 @@ class ThrowDiceHandler(BaseHandler):
         gamer = random.randint(0, 99)
 
         # Генерируем два кубика D100 (0-99)
-        while positive == gamer and negative == gamer:
+        while positive == gamer or negative == gamer:
             positive = random.randint(0, 99)
             negative = random.randint(0, 99)
             gamer = random.randint(0, 99)
