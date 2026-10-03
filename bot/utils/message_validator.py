@@ -39,6 +39,10 @@ PROMPT_INJECTION_PATTERNS = [
 # Компилируем паттерны для производительности
 _INJECTION_PATTERN: Pattern | None = None
 
+# Управляющие и невидимые символы: их удаление склеивает слова,
+# поэтому детектор инъекций применяет его ДО сопоставления с паттернами
+_INVISIBLE_CHARS = re.compile(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F\u200b-\u200d\ufeff]')
+
 
 def _get_injection_pattern() -> Pattern:
     """Ленивая компиляция паттернов."""
@@ -59,7 +63,13 @@ def is_prompt_injection(text: str) -> bool:
         True если обнаружена попытка инъекции
     """
     pattern = _get_injection_pattern()
-    return bool(pattern.search(text))
+    # Невидимые символы проверяем в двух нормализациях, иначе обход не ловится:
+    # удаление — разрыв внутри слова ('ig\u200bnore' -> 'ignore'),
+    # замена пробелом — разрыв вместо пробела ('забудь\u200bвсе' -> 'забудь все')
+    return bool(
+        pattern.search(_INVISIBLE_CHARS.sub('', text))
+        or pattern.search(_INVISIBLE_CHARS.sub(' ', text))
+    )
 
 
 def sanitize_text(text: str, settings: Settings) -> str:
@@ -90,11 +100,8 @@ def sanitize_text(text: str, settings: Settings) -> str:
         logger.warning(f'Обнаружена попытка prompt injection: {text[:100]}')
         raise ValueError('Недопустимое содержимое сообщения')
 
-    # Удаление нулевых символов и других управляющих
-    text = re.sub(r'[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]', '', text)
-
-    # Нормализация Unicode (удаление invisible characters)
-    text = re.sub(r'[​‌‍﻿]', '', text)
+    # Удаление управляющих и невидимых символов
+    text = _INVISIBLE_CHARS.sub('', text)
 
     return text.strip()
 
