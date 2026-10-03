@@ -140,6 +140,12 @@ class DialogService:
             role: Роль (user или bot)
             text: Текст сообщения
         """
+        # Пустой текст недопустим для БД (db.add_message бросает ValueError),
+        # а в истории диалога такие записи только сдвигают полезный контекст
+        if not text or not text.strip():
+            self._logger.debug(f'Пропущено пустое сообщение role={role} для user_id={user_id}')
+            return
+
         await db.add_message(user_id, role, text, self.max_history_messages)
         # Синхронизировать с кэшем в памяти
         with self._lock:

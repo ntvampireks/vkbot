@@ -17,7 +17,10 @@ class MetricsCollector:
 
     def __init__(self):
         """Инициализирует сборщик метрик."""
-        self._lock = threading.Lock()
+        # RLock, а не Lock: get_all_metrics/get_prometheus_format держат блокировку
+        # и вызывают get_histogram_stats, повторный захват того же лока иначе
+        # привёл бы к взаимоблокировке потока, обслуживающего /health
+        self._lock = threading.RLock()
         self._counters: Dict[str, int] = {}
         self._gauges: Dict[str, float] = {}
         self._histograms: Dict[str, list] = {}
@@ -115,23 +118,33 @@ class MetricsCollector:
 
     def get_prometheus_format(self) -> str:
         """Получить метрики в формате Prometheus."""
+        # Снимок под блокировкой: итерация по словарям без неё даёт
+        # RuntimeError: dictionary changed size during iteration,
+        # если параллельно пишется новая метрика
+        with self._lock:
+            counters = dict(self._counters)
+            gauges = dict(self._gauges)
+            histograms = {
+                name: self.get_histogram_stats(name)
+                for name in self._histograms
+            }
+
         lines = []
 
         # Counters
-        for name, value in self._counters.items():
+        for name, value in counters.items():
             lines.append(f'# HELP {name} Total count')
             lines.append(f'# TYPE {name} counter')
             lines.append(f'{name} {value}')
 
         # Gauges
-        for name, value in self._gauges.items():
+        for name, value in gauges.items():
             lines.append(f'# HELP {name} Current value')
             lines.append(f'# TYPE {name} gauge')
             lines.append(f'{name} {value}')
 
         # Histograms
-        for name, stats in self._histograms.items():
-            histogram_stats = self.get_histogram_stats(name)
+        for name, histogram_stats in histograms.items():
             if histogram_stats:
                 lines.append(f'# HELP {name}_stats Statistics')
                 lines.append(f'# TYPE {name}_stats gauge')
