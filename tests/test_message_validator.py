@@ -241,8 +241,8 @@ class TestSanitizeText:
 
     def test_max_length_within_limit(self, settings):
         """Текст в пределах лимита."""
-        result = sanitize_text("x" * 10000, settings)
-        assert len(result) == 10000
+        result = sanitize_text("x" * 4096, settings)
+        assert len(result) == 4096
 
     def test_null_byte_removal(self, settings):
         """Удаление нулевых символов."""

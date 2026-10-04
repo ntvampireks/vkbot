@@ -20,6 +20,7 @@ from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
 from bot.lifecycle import register_signal_handlers, start_health_server
 from bot import api
+from bot.utils.app_logger import get_logger
 from bot.utils.message_validator import has_mention, strip_mention
 from storage.db import init_db
 
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 
 def main() -> None:
     """Запуск VK бота."""
+    global logger
     try:
         settings = Settings()
     except ValidationError as e:
@@ -38,10 +40,12 @@ def main() -> None:
         logger.error('  - VK_BOT_NAME: имя бота для упоминаний')
         sys.exit(1)
 
+    # Настраиваем логирование (LOG_LEVEL/LOG_DIR) до первых логов
+    logger = get_logger('bot', settings)
+
     init_db()
 
     # Явная инициализация зависимостей
-    logger = logging.getLogger('bot')
     from bot.utils.metrics import get_metrics
     metrics = get_metrics()
 
@@ -103,7 +107,7 @@ def main() -> None:
         # Запускаем асинхронную обработку в отдельном event loop
         asyncio.run_coroutine_threadsafe(processor.process(message), loop)
 
-    bot_user_id = -int(settings.vk_group_id_int) if settings.vk_group_id else None
+    bot_user_id = settings.vk_group_id_int if settings.vk_group_id else None
     event_handler = EventHandler(on_message, bot_user_id=bot_user_id, settings=settings, logger=logger)
     vk_client.run_forever(event_handler.handle_event)
 

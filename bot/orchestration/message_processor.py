@@ -78,6 +78,11 @@ class MessageProcessor:
         """Получить или создать диалог для пользователя."""
         dialog = await self.dialog_service.get_dialog_async(message.user_id)
 
+        # Диалог протух по DIALOG_TIMEOUT_HOURS — начинаем новый раунд
+        if dialog is not None and not dialog.is_active(self._settings.dialog_timeout_hours):
+            self._logger.info(f'Диалог {message.user_id} истёк, контекст сброшен')
+            dialog = None
+
         if dialog is None:
             dialog = Dialog(
                 user_id=message.user_id,
@@ -85,6 +90,8 @@ class MessageProcessor:
                 max_history_messages=self.dialog_service.max_history_messages
             )
             self.dialog_service.register_dialog(dialog)
+        else:
+            dialog.last_active = message.timestamp  # touch — колонка last_active в БД актуальна
 
         return dialog
 

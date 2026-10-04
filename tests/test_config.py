@@ -1,4 +1,4 @@
-"""Тесты SSRF-валидации LLM_BASE_URL и флага LLM_ALLOW_PRIVATE."""
+"""Тесты Settings: SSRF-валидация LLM_BASE_URL, флаг LLM_ALLOW_PRIVATE, нормализация ID."""
 
 import pytest
 from pydantic import ValidationError
@@ -55,3 +55,11 @@ def test_llm_allow_private_true_allows_private_url():
 def test_llm_allow_private_true_still_validates_scheme():
     with pytest.raises(ValidationError):
         make_settings(llm_base_url='ftp://192.168.1.100/v1', llm_allow_private=True)
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('12345', 12345),
+    ('-12345', 12345),  # публичный формат: VK_GROUP_ID=-12345 → id в longpoll-событиях положительный
+])
+def test_vk_group_id_int_normalizes_sign(raw, expected):
+    assert make_settings(vk_group_id=raw).vk_group_id_int == expected

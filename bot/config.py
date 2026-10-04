@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     message_api_timeout: int = Field(5, ge=1, le=60, description='Таймаут VK API запроса в секундах')
 
     # Настройки валидации сообщений
-    max_message_length: int = Field(10000, ge=1, le=40960, description='Максимальная длина сообщения в символах')
+    max_message_length: int = Field(4096, ge=1, le=4096, description='Максимальная длина сообщения в символах')
     enable_prompt_injection_protection: bool = Field(True, description='Включить защиту от prompt injection атак')
 
     # Настройки per-user rate limiter
@@ -100,8 +100,8 @@ class Settings(BaseSettings):
 
     @property
     def vk_group_id_int(self) -> int:
-        """Групповой ID как integer."""
-        return int(self.vk_group_id)
+        """Групповой ID как integer (нормализованный: публичный формат -123456 → 123456)."""
+        return abs(int(self.vk_group_id))
 
 
 # Примечание: Settings создаётся в main.py и передаётся явно через Dependency Injection

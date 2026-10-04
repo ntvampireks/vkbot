@@ -12,7 +12,6 @@ from bot.config import Settings
 
 # Константы VK API
 MAX_PEER_ID = 2**31 - 1  # Максимальное значение signed 32-bit int
-MAX_MESSAGE_LENGTH = 40960  # Лимит длины сообщения VK API
 MESSAGE_TRUNCATE_SUFFIX = '...'  # Суффикс при обрезке сообщения
 
 
@@ -58,12 +57,12 @@ class VKClient:
         return {
             "message_id": getattr(event, "message_id", -100),
             "user_id": getattr(event, "user_id", -100),
-            "text": getattr(event, "text", ""),
+            "text": getattr(event, "message", getattr(event, "text", "")),
             "timestamp": getattr(event, "timestamp", 0),
             "peer_id": getattr(event, "peer_id", -100),
             "attachments": getattr(event, "attachments", []),
             "type": event.type if hasattr(event, "type") else event.get("type"),
-            "out": getattr(event, "out", 0)
+            "out": 1 if getattr(event, "from_me", False) else 0
         }
 
     def _calculate_backoff_delay(self, attempt: int, base_delay: int = 1, max_delay: int = 60) -> float:
@@ -72,13 +71,13 @@ class VKClient:
         self._logger.info(f'Повторная попытка подключения через {delay:.1f}с (попытка {attempt})')
         return delay
 
-    def _sleep_interruptible(self, delay: float, running_flag: bool) -> bool:
-        """Sleep с возможностью прерывания. Возвращает True если был прерван."""
+    def _sleep_interruptible(self, delay: float) -> bool:
+        """Sleep с возможностью прерывания."""
         slept = 0.0
-        while slept < delay and running_flag:
+        while slept < delay and self._running:
             time.sleep(0.5)
             slept += 0.5
-        return not running_flag
+        return self._running
 
     def send_message(self, peer_id: int, text: str, reply_to: int | None = None, timeout: int = 5) -> None:
         """Отправляет сообщение через VK API.
@@ -105,8 +104,8 @@ class VKClient:
             self._logger.error(f'peer_id превышает максимальное значение: {peer_id}')
             raise ValueError(f'peer_id превышает максимальное значение ({MAX_PEER_ID})')
 
-        if len(text) > MAX_MESSAGE_LENGTH:
-            text = text[:MAX_MESSAGE_LENGTH - len(MESSAGE_TRUNCATE_SUFFIX)] + MESSAGE_TRUNCATE_SUFFIX
+        if len(text) > self._settings.max_message_length:
+            text = text[:self._settings.max_message_length - len(MESSAGE_TRUNCATE_SUFFIX)] + MESSAGE_TRUNCATE_SUFFIX
         try:
             params = {
                 'peer_id': peer_id,
@@ -163,11 +162,15 @@ class VKClient:
                 self._handle_auth_error('VK', e)
             except ApiError as e:
                 self._logger.error(f'Ошибка VK API: {e}')
+                reconnect_attempts += 1
+                delay = self._calculate_backoff_delay(reconnect_attempts, base_delay, max_reconnect_delay)
+                if self._sleep_interruptible(delay):
+                    continue
             except Exception as e:
                 self._logger.error(f'Ошибка LongPoll: {e}')
                 reconnect_attempts += 1
                 delay = self._calculate_backoff_delay(reconnect_attempts, base_delay, max_reconnect_delay)
-                if self._sleep_interruptible(delay, self._running):
+                if self._sleep_interruptible(delay):
                     continue
 
     def stop(self):

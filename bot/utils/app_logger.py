@@ -18,36 +18,43 @@ LOG_LEVEL_MAP = {
     'CRITICAL': logging.CRITICAL,
 }
 
-# Глобальный экземпляр логгера
-_logger: logging.Logger | None = None
+# Состояние конфигурации: боевая конфигурация применяется один раз,
+# когда прилетают settings, независимо от порядка предыдущих вызовов
+_configured = False
+_fallback_handler: logging.StreamHandler | None = None
 
 
 def get_logger(name: str = 'bot', settings: Settings | None = None) -> logging.Logger:
     """Получить логгер для модуля.
 
-    Создаёт корневой логгер один раз при первом вызове,
-    затем возвращает дочерние логгеры для конкретных модулей.
+    Настраивает логгер 'bot' один раз при первом вызове с settings:
+    консоль + файлы согласно LOG_LEVEL/LOG_DIR. Вызовы без settings
+    (импорты модулей до main()) временно вешают консольный handler,
+    и эта конфигурация заменяется, когда settings приходят.
 
     Args:
         name: Имя логгера (обычно __name__)
         settings: Экземпляр Settings для конфигурации логгера.
-            При первом вызове должен быть передан для настройки root logger.
 
     Returns:
         Настроенный логгер
     """
-    global _logger
-    if _logger is None:
+    global _configured, _fallback_handler
+    if not _configured:
+        root = logging.getLogger('bot')
         if settings is not None:
-            _logger = _setup_root_logger(settings)
-        else:
-            # Fallback: базовая конфигурация без settings
-            _logger = logging.getLogger('bot')
-            _logger.setLevel(logging.DEBUG)
-            if not _logger.handlers:
-                handler = logging.StreamHandler(sys.stdout)
-                handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
-                _logger.addHandler(handler)
+            if _fallback_handler is not None:
+                root.removeHandler(_fallback_handler)
+                _fallback_handler.close()
+                _fallback_handler = None
+            _setup_root_logger(settings)
+            _configured = True
+        elif _fallback_handler is None:
+            # Fallback: консольная конфигурация до получения settings
+            _fallback_handler = logging.StreamHandler(sys.stdout)
+            _fallback_handler.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+            root.setLevel(logging.DEBUG)
+            root.addHandler(_fallback_handler)
 
     return logging.getLogger(name)
 
@@ -78,10 +85,9 @@ def _setup_root_logger(settings: Settings) -> logging.Logger:
     # Краткий формат для консоли
     console_formatter = logging.Formatter('%(levelname)s - %(message)s')
 
-    # Консольный handler
+    # Консольный handler: уровень наследуется от логгера, то есть равен LOG_LEVEL
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(console_formatter)
-    console_handler.setLevel(logging.INFO)
     root_logger.addHandler(console_handler)
 
     # Создаем директорию для логов
