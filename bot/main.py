@@ -89,6 +89,22 @@ def main() -> None:
 
     logger.info('Бот запущен...')
 
+    def _consume_future(fut):
+        """Потребляет исключение из фоновой задачи, чтобы оно не потерялось.
+
+        MessageProcessor.process уже логирует ошибку с traceback и считает
+        метрику; здесь мы лишь помечаем исключение как «полученное» (иначе
+        asyncio в конце выводит 'Task exception was never retrieved') и
+        фиксируем сам факт падения фоновой задачи.
+        """
+        try:
+            exc = fut.exception()
+            if exc is not None:
+                logger.error(f'Фоновая обработка сообщения завершилась ошибкой: {exc!r}')
+        except Exception:
+            # Задача отменена (CancelledError) или loop остановлен — не пробрасываем
+            pass
+
     def on_message(message: Message):
         if not has_mention(message, settings):
             logger.debug('Бот не упомянут, пропускаем')
@@ -104,8 +120,16 @@ def main() -> None:
                 reply_to=message.id)
             return
 
-        # Запускаем асинхронную обработку в отдельном event loop
-        asyncio.run_coroutine_threadsafe(processor.process(message), loop)
+        # Запускаем асинхронную обработку в отдельном event loop.
+        # Future сохраняется и обрабатывается в done-callback, иначе исключение
+        # из processor.process (там стоит 'raise') потерялось бы как
+        # 'Task exception was never retrieved'.
+        try:
+            future = asyncio.run_coroutine_threadsafe(processor.process(message), loop)
+        except RuntimeError as e:
+            logger.error(f'Не удалось поставить задачу в event loop: {e}')
+            return
+        future.add_done_callback(_consume_future)
 
     bot_user_id = settings.vk_group_id_int if settings.vk_group_id else None
     event_handler = EventHandler(on_message, bot_user_id=bot_user_id, settings=settings, logger=logger)

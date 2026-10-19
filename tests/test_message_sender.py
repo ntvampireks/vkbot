@@ -3,7 +3,7 @@
 import pytest
 import threading
 import time
-from unittest.mock import Mock, MagicMock, patch
+from unittest.mock import ANY, Mock, MagicMock, patch
 from unittest.mock import call
 
 from bot.config import Settings
@@ -17,7 +17,6 @@ def _create_mock_settings():
     settings = Mock(spec=Settings)
     settings.message_send_delay = 0
     settings.message_retry_delay = 0
-    settings.message_api_timeout = 5
     return settings
 
 
@@ -209,6 +208,30 @@ class TestMessageSenderRetryLogic:
         # Успех на третьей попытке — три вызова
         assert vk_client.send_message.call_count == 3
 
+    def test_retries_reuse_one_random_id(self):
+        """Один random_id на все попытки: VK по нему отбрасывает повтор, разный — дубль сообщения."""
+        vk_client = Mock()
+        vk_client.send_message.side_effect = [
+            Exception('Error 1'),
+            Exception('Error 2'),
+            None
+        ]
+
+        sender = MessageSender(
+            vk_client=vk_client,
+            rate_limiter=RateLimiter(),
+            queue=MessageQueue(),
+            settings=_create_mock_settings(),
+            max_retries=3
+        )
+
+        sender._send_with_retry(QueuedMessage(peer_id=123, text='Hello', reply_to=None))
+
+        ids = [c.kwargs.get('random_id') for c in vk_client.send_message.call_args_list]
+        assert len(ids) == 3
+        assert ids[0] is not None, 'random_id не передаётся, каждая попытка генерирует свой'
+        assert len(set(ids)) == 1, f'random_id меняется между попытками: {ids}'
+
     def test_send_fails_after_max_retries(self):
         """Ошибка после исчерпания всех попыток retry."""
         vk_client = Mock()
@@ -314,32 +337,5 @@ class TestMessageSenderRetryLogic:
         vk_client.send_message.assert_called_once_with(
             123, 'Hello',
             reply_to=456,
-            timeout=5
-        )
-
-    def test_send_with_custom_timeout(self):
-        """Проверка отправки с кастомным таймаутом."""
-        vk_client = Mock()
-        rate_limiter = RateLimiter()
-        queue = MessageQueue()
-        settings = _create_mock_settings()
-        settings.message_api_timeout = 10
-
-        sender = MessageSender(
-            vk_client=vk_client,
-            rate_limiter=rate_limiter,
-            queue=queue,
-            settings=settings,
-            max_retries=3
-        )
-
-        message = QueuedMessage(peer_id=123, text='Hello', reply_to=None)
-
-        sender._send_with_retry(message)
-
-        # Проверить что timeout передан корректно
-        vk_client.send_message.assert_called_once_with(
-            123, 'Hello',
-            reply_to=None,
-            timeout=10
+            random_id=ANY
         )

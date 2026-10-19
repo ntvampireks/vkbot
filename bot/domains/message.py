@@ -6,10 +6,11 @@ from typing import Any
 @dataclass
 class Message:
     id: int
-    user_id: int
+    user_id: int  # ключ диалога: всегда peer_id (в личных сообщениях он же id автора)
     text: str
     timestamp: datetime
     peer_id: int | None = None
+    author_id: int | None = None  # автор сообщения; в беседе VK отдаёт его не всегда
     attachments: list[dict[str, Any]] | None = None
     out: int = 0
 
@@ -33,6 +34,7 @@ class Message:
             text=message_data.get('text', ''),
             timestamp=timestamp,
             peer_id=message_data.get('peer_id'),
+            author_id=message_data.get('author_id'),
             attachments=message_data.get('attachments', []),
             out=message_data.get('out', 0)
         )

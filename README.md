@@ -113,10 +113,28 @@ MESSAGE_SEND_DELAY=0.5
 MESSAGE_RETRY_DELAY=1.0
 
 # Опционально: максимальная длина сообщения
-MAX_MESSAGE_LENGTH=10000
+MAX_MESSAGE_LENGTH=4096
 
 # Опционально: защита от prompt injection
 ENABLE_PROMPT_INJECTION_PROTECTION=true
+# Таймаут VK API запросов (секунды)
+MESSAGE_API_TIMEOUT=5
+
+# Обязательно: URL OpenAI-совместимого API для классификатора намерений
+LLM_BASE_URL=http://your-llm-server/v1
+
+# Опционально: настройки LLM
+LLM_API_KEY=
+LLM_MODEL_NAME=qwen
+LLM_TIMEOUT=30
+# true — разрешить LLM_BASE_URL в приватных сетях (отключает SSRF-проверку)
+LLM_ALLOW_PRIVATE=false
+
+# Опционально: размер кэша диалогов
+MAX_DIALOGS_CACHE=1000
+
+# Опционально: размер очереди сообщений
+MESSAGE_QUEUE_MAXSIZE=1000
 ```
 
 **Как узнать ID сообщества:**
@@ -264,10 +282,17 @@ python -m bot.main
 | `MESSAGE_SEND_DELAY` | Задержка перед отправкой сообщения (секунды) | float | `0.5` |
 | `MESSAGE_RETRY_DELAY` | Задержка между попытками повторной отправки (секунды) | float | `1.0` |
 | `MESSAGE_API_TIMEOUT` | Таймаут VK API запросов (секунды) | int | `5` |
-| `MAX_MESSAGE_LENGTH` | Максимальная длина сообщения в символах | int | `10000` |
+| `MAX_MESSAGE_LENGTH` | Максимальная длина сообщения в символах (лимит VK API — 4096) | int | `4096` |
 | `ENABLE_PROMPT_INJECTION_PROTECTION` | Включить защиту от prompt injection атак | bool | `true` |
 | `PER_USER_MAX_REQUESTS` | Максимум сообщений от пользователя за окно | int | `10` |
 | `PER_USER_WINDOW_SECONDS` | Размер окна для per-user лимита (секунды) | int | `60` |
+| `MAX_DIALOGS_CACHE` | Максимальный размер кэша диалогов | int | `1000` |
+| `MESSAGE_QUEUE_MAXSIZE` | Максимальный размер очереди сообщений | int | `1000` |
+| `LLM_ALLOW_PRIVATE` | Разрешить `LLM_BASE_URL` в приватных сетях (отключает SSRF-проверку) | bool | `false` |
+| `LLM_BASE_URL` | URL OpenAI-совместимого API (обязательно) | string | - |
+| `LLM_API_KEY` | API ключ для LLM сервиса | string | `` |
+| `LLM_MODEL_NAME` | Имя модели для классификации | string | `qwen` |
+| `LLM_TIMEOUT` | Таймаут LLM запросов (секунды) | float | `30` |
 
 ## Добавление нового обработчика
 

@@ -27,7 +27,11 @@ def create_router(llm_client: Optional['OpenAIClient'] = None) -> dict[str, Any]
             continue
 
         module_name = f'bot.handlers.{handler_file.stem}'
-        module = importlib.import_module(module_name)
+        try:
+            module = importlib.import_module(module_name)
+        except Exception as e:
+            logger.error(f'Ошибка импорта модуля {module_name}: {e}')
+            continue
 
         for attr_name in dir(module):
             attr = getattr(module, attr_name)

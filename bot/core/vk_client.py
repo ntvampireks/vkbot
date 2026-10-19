@@ -15,6 +15,29 @@ MAX_PEER_ID = 2**31 - 1  # Максимальное значение signed 32-b
 MESSAGE_TRUNCATE_SUFFIX = '...'  # Суффикс при обрезке сообщения
 
 
+class TimeoutSession(requests.Session):
+    """Сессия requests с таймаутом по умолчанию.
+
+    vk_api вызывает self.http.post(url, values) без timeout, поэтому запрос
+    с зависшим соединением висел бы вечно. VkApi принимает готовую сессию,
+    так что таймаут задаётся здесь и действует на все вызовы API.
+    """
+
+    def __init__(self, default_timeout: float):
+        """Инициализирует сессию.
+
+        Args:
+            default_timeout: Таймаут запроса в секундах
+        """
+        super().__init__()
+        self.default_timeout = default_timeout
+
+    def request(self, method, url, **kwargs) -> requests.Response:
+        """Выполняет запрос, подставляя default_timeout если он не задан явно."""
+        kwargs.setdefault('timeout', self.default_timeout)
+        return super().request(method, url, **kwargs)
+
+
 class VKClient:
     """Клиент VK API с LongPoll поддержкой.
 
@@ -32,7 +55,8 @@ class VKClient:
         self._settings = settings
         self._logger = logger or logging.getLogger(__name__)
         self.vk_session = vk_api.VkApi(
-            token=self._settings.vk_group_token
+            token=self._settings.vk_group_token,
+            session=TimeoutSession(self._settings.message_api_timeout)
         )
         self.vk = self.vk_session.get_api()
         self.longpoll = VkLongPoll(self.vk_session)
@@ -53,13 +77,22 @@ class VKClient:
         raise
 
     def _parse_event(self, event) -> dict:
-        """Распарсить VK событие в структуру сообщения."""
+        """Распарсить VK событие в структуру сообщения.
+
+        Ключом диалога (поле user_id) выступает peer_id: VK отдаёт его в MESSAGE_NEW
+        всегда, а автора в беседе — только через extra_values['from']. Автор уходит
+        в author_id и для ключа диалога не используется, иначе одна беседа давала бы
+        то ключ автора, то ключ беседы.
+        """
+        peer_id = getattr(event, "peer_id", 0)
+        author_id = getattr(event, "user_id", 0)
         return {
-            "message_id": getattr(event, "message_id", -100),
-            "user_id": getattr(event, "user_id", -100),
+            "message_id": getattr(event, "message_id", 0),
+            "user_id": peer_id,
+            "author_id": author_id if isinstance(author_id, int) and author_id > 0 else None,
             "text": getattr(event, "message", getattr(event, "text", "")),
             "timestamp": getattr(event, "timestamp", 0),
-            "peer_id": getattr(event, "peer_id", -100),
+            "peer_id": peer_id,
             "attachments": getattr(event, "attachments", []),
             "type": event.type if hasattr(event, "type") else event.get("type"),
             "out": 1 if getattr(event, "from_me", False) else 0
@@ -79,14 +112,24 @@ class VKClient:
             slept += 0.5
         return self._running
 
-    def send_message(self, peer_id: int, text: str, reply_to: int | None = None, timeout: int = 5) -> None:
+    def send_message(
+        self,
+        peer_id: int,
+        text: str,
+        reply_to: int | None = None,
+        random_id: int | None = None
+    ) -> None:
         """Отправляет сообщение через VK API.
+
+        Таймаут запроса задаётся сессией (TimeoutSession из settings),
+        а не этим вызовом: сессия общая с потоком LongPoll.
 
         Args:
             peer_id: ID получателя (должен быть положительным int)
             text: Текст сообщения
             reply_to: ID сообщения для ответа (опционально)
-            timeout: Таймаут запроса в секундах
+            random_id: Ключ идемпотентности VK. При повторных попытках передают
+                один и тот же, чтобы VK отбросил дубль; None — сгенерировать новый
 
         Raises:
             ValueError: Если peer_id невалиден
@@ -110,8 +153,7 @@ class VKClient:
             params = {
                 'peer_id': peer_id,
                 'message': text,
-                'random_id': secrets.randbelow(2**31),
-                'timeout': timeout,
+                'random_id': random_id if random_id is not None else secrets.randbelow(2**31),
             }
             if reply_to is not None:
                 params['reply_to'] = reply_to

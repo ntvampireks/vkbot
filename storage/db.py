@@ -59,6 +59,11 @@ async def _init_db_async():
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_messages_user_timestamp ON messages(user_id, timestamp)')
         await conn.execute('CREATE INDEX IF NOT EXISTS idx_dialogs_last_active ON dialogs(last_active)')
 
+        # Диалог ключуется peer_id; строки с user_id <= 0 оставили беседы, в которых
+        # VK не прислал автора и в ключ попал прежний дефолт -100
+        await conn.execute('DELETE FROM messages WHERE user_id <= 0')
+        await conn.execute('DELETE FROM dialogs WHERE user_id <= 0')
+
         await conn.commit()
 
 

@@ -1,6 +1,7 @@
 """Отправка сообщений через VK API с фоновым потоком."""
 
 import logging
+import secrets
 import threading
 import time
 from typing import Callable
@@ -42,7 +43,6 @@ class MessageSender:
         self.max_retries = max_retries
         self.send_delay = settings.message_send_delay
         self.retry_delay = settings.message_retry_delay
-        self.api_timeout = settings.message_api_timeout
         self._logger = logger or logging.getLogger(__name__)
 
         self._running = False
@@ -93,6 +93,9 @@ class MessageSender:
             message: Сообщение для отправки
         """
         last_error: Exception | None = None
+        # Один ключ идемпотентности на все попытки: VK отбрасывает повтор с тем же
+        # random_id, а новый random_id на попытку дал бы дубль сообщения
+        random_id = secrets.randbelow(2**31)
 
         for attempt in range(self.max_retries):
             try:
@@ -101,7 +104,7 @@ class MessageSender:
                 self.vk_client.send_message(
                     message.peer_id, message.text,
                     reply_to=message.reply_to,
-                    timeout=self.api_timeout
+                    random_id=random_id
                 )
                 self._logger.info(f'Сообщение отправлено: peer_id={message.peer_id}')
                 return

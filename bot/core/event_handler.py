@@ -68,11 +68,18 @@ class EventHandler:
 
         message_id = event.get("message_id", 0)
         peer_id = event.get("peer_id", 0)
-        user_id = event.get("user_id", 0)
+        author_id = event.get("author_id")
+        # Лимит частоты — по автору; в беседе без автора остаётся ключ диалога,
+        # и он хотя бы разделяет разные диалоги (в отличие от общего -100)
+        limiter_key = author_id if author_id else peer_id
 
-        # Пропускаем сообщения от бота (по user_id)
-        self._logger.debug(f'Проверка бота: bot_user_id={self.bot_user_id}, user_id={user_id}')
-        if self.bot_user_id and user_id == self.bot_user_id:
+        if peer_id <= 0:
+            self._logger.warning(f'Событие {message_id} без валидного peer_id, пропускаем')
+            return
+
+        # Пропускаем сообщения от бота (по автору)
+        self._logger.debug(f'Проверка бота: bot_user_id={self.bot_user_id}, author_id={author_id}')
+        if self.bot_user_id and author_id == self.bot_user_id:
             self._logger.info(f'Сообщение от бота {message_id}, пропускаем')
             return
 
@@ -81,9 +88,9 @@ class EventHandler:
             return
 
         # Проверка per-user rate limiter (атомарная операция)
-        if not self.per_user_limiter.try_acquire(user_id):
-            wait_time = self.per_user_limiter.get_wait_time(user_id)
-            self._logger.warning(f'Пользователь {user_id} превысил лимит сообщений. Ожидание: {wait_time:.1f}с')
+        if not self.per_user_limiter.try_acquire(limiter_key):
+            wait_time = self.per_user_limiter.get_wait_time(limiter_key)
+            self._logger.warning(f'Автор {limiter_key} превысил лимит сообщений. Ожидание: {wait_time:.1f}с')
             return
 
         try:

@@ -1,4 +1,5 @@
 import re
+import json
 from typing import Pattern
 from bot.utils.app_logger import get_logger
 from bot.config import Settings
@@ -104,6 +105,16 @@ def sanitize_text(text: str, settings: Settings) -> str:
     text = _INVISIBLE_CHARS.sub('', text)
 
     return text.strip()
+
+
+def as_user_data(text: str) -> str:
+    """Оборачивает пользовательский текст как строковые данные, а не как инструкции.
+
+    JSON-экранирование гарантирует, что текст не будет воспринят моделью как
+    команды/управляющие конструкции промпта; модель должна трактовать его
+    только как данные игрока.
+    """
+    return json.dumps(text, ensure_ascii=False)
 
 
 def validate_message(text: str, settings: Settings) -> tuple[bool, str]:
