@@ -1,6 +1,5 @@
-"""Очередь сообщений без фонового потока."""
+from queue import Queue, Empty, Full
 
-from queue import Queue, Empty
 from typing import NamedTuple
 
 
@@ -26,15 +25,23 @@ class MessageQueue:
         """
         self._queue: Queue = Queue(maxsize=maxsize)
 
-    def put(self, peer_id: int, text: str, reply_to: int | None = None) -> None:
-        """Поместить сообщение в очередь.
+    def put(self, peer_id: int, text: str, reply_to: int | None = None) -> bool:
+        """Поместить сообщение в очередь (неблокирующе).
 
         Args:
             peer_id: ID получателя
             text: Текст сообщения
             reply_to: ID сообщения, на которое ответить
+
+        Returns:
+            True — сообщение помещено в очередь;
+            False — очередь переполнена, сообщение отклонено.
         """
-        self._queue.put((peer_id, text, reply_to))
+        try:
+            self._queue.put_nowait((peer_id, text, reply_to))
+            return True
+        except Full:
+            return False
 
     def get(self, timeout: float = 1.0) -> QueuedMessage | None:
         """Получить сообщение из очереди.

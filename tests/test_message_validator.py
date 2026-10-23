@@ -17,8 +17,16 @@ from bot.utils.message_validator import (
 
 @pytest.fixture
 def settings():
-    """Фикстура для создания Settings с дефолтными значениями."""
-    return Settings()
+    """Изолированные Settings: явные обязательные поля, без чтения .env/окружения."""
+    return Settings(
+        vk_group_token='test-token',
+        vk_group_id='12345',
+        vk_bot_name='testbot',
+        llm_base_url='https://llm.example.com/v1',
+        max_message_length=4096,
+        enable_prompt_injection_protection=True,
+        _env_file=None,
+    )
 
 
 class TestPromptInjectionEnglish:

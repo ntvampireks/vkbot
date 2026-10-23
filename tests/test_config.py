@@ -7,12 +7,17 @@ from bot.config import Settings
 
 
 def make_settings(**overrides) -> Settings:
-    """Settings с заглушками обязательных полей, без чтения .env."""
+    """Settings с заглушками обязательных полей, без чтения .env.
+
+    Явно задаём llm_allow_private=False, чтобы значение из окружения
+    (например, LLM_ALLOW_PRIVATE=true) не ломало тесты «по умолчанию».
+    """
     base = dict(
         vk_group_token='test-token',
         vk_group_id='12345',
         vk_bot_name='testbot',
         llm_base_url='https://llm.example.com/v1',
+        llm_allow_private=False,
         _env_file=None,
     )
     base.update(overrides)

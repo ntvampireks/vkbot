@@ -56,11 +56,14 @@ class MessageService:
 
         Returns:
             True если сообщение помещено в очередь, False если сервис не запущен
+            или очередь переполнена.
         """
         if not self.sender.is_running:
             self._logger.warning('MessageService не запущен')
             return False
-        self.queue.put(peer_id, text, reply_to)
+        if not self.queue.put(peer_id, text, reply_to):
+            self._logger.warning(f'Очередь сообщений переполнена, сообщение peer_id={peer_id} отклонено')
+            return False
         return True
 
     def stop(self, timeout: float = 5.0) -> None:
