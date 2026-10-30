@@ -65,7 +65,7 @@ class TestGetPrometheusFormat:
         lock_held = []
 
         def spy(name):
-            lock_held.append(metrics._lock.locked())
+            lock_held.append(metrics._lock._is_owned())
             return original(name)
 
         monkeypatch.setattr(metrics, 'get_histogram_stats', spy)

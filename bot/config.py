@@ -1,6 +1,20 @@
 import re
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+from pydantic import Field, field_validator, model_validator
+
+
+_ALLOWED_LOG_LEVELS = {'DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'}
+
+
+_PRIVATE_PATTERNS = [
+    r'^https?://10\.',                    # Private range 10.0.0.0/8
+    r'^https?://172\.(1[6-9]|2[0-9]|3[0-1])\.',  # Private range 172.16.0.0/12
+    r'^https?://192\.168\.',              # Private range 192.168.0.0/16
+    r'^https?://127\.',                   # Loopback
+    r'^https?://169\.254\.',              # Link-local (AWS metadata)
+    r'^https?://localhost',               # Localhost
+    r'^https?://0\.0\.0\.0',              # All interfaces
+]
 
 
 class Settings(BaseSettings):
@@ -30,7 +44,7 @@ class Settings(BaseSettings):
     log_dir: str = Field('logs', description='Путь к каталогу для логов')
 
     # Уровень логирования
-    log_level: str = Field('DEBUG', description='Уровень логирования (DEBUG, INFO, WARNING, ERROR)')
+    log_level: str = Field('DEBUG', description='Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)')
 
     # Настройки отправки сообщений
     message_send_delay: float = Field(0.5, ge=0, description='Задержка перед отправкой сообщения в секундах')
@@ -52,7 +66,6 @@ class Settings(BaseSettings):
     message_queue_maxsize: int = Field(1000, ge=100, le=10000, description='Максимальный размер очереди сообщений')
 
     # Настройки LLM для IntentClassifier
-    # Объявлен ДО llm_base_url, чтобы значение был доступен в info.data валидатора
     llm_allow_private: bool = Field(False, description='Разрешить LLM_BASE_URL в приватных сетях (LLM в internal-сети)')
     llm_base_url: str = Field(..., min_length=1, description='URL OpenAI-совместимого API')
     llm_api_key: str = Field('', description='API ключ для LLM сервиса')
@@ -61,15 +74,11 @@ class Settings(BaseSettings):
     
     @field_validator('llm_base_url')
     @classmethod
-    def validate_llm_url(cls, v: str, info) -> str:
-        """Валидирует LLM URL.
+    def validate_llm_url(cls, v: str) -> str:
+        """Валидирует непустоту и scheme LLM-URL.
 
-        Проверяет:
-        - URL начинается с http:// или https://
-        - Не указывает на приватные/internal сети (защита от SSRF)
-
-        Проверка приватных сетей пропускается при llm_allow_private=True
-        (легитимный случай: LLM развёрнут во внутренней сети).
+        SSRF-проверка приватных сетей выполняется в validate_llm_ssrf
+        (model_validator), т.к. зависит от поля llm_allow_private.
         """
         if not v:
             raise ValueError('LLM URL не может быть пустым')
@@ -78,25 +87,32 @@ class Settings(BaseSettings):
         if not (v.startswith('http://') or v.startswith('https://')):
             raise ValueError('LLM URL должен начинаться с http:// или https://')
 
-        if info.data.get('llm_allow_private'):
-            return v
+        return v
+
+    @model_validator(mode='after')
+    def validate_llm_ssrf(self) -> 'Settings':
+        """SSRF-проверка LLM_BASE_URL; пропускается при llm_allow_private=True."""
+        if self.llm_allow_private:
+            return self
 
         # Проверка на доступ к внутренним сетям (SSRF защита)
-        private_patterns = [
-            r'^https?://10\.',                    # Private range 10.0.0.0/8
-            r'^https?://172\.(1[6-9]|2[0-9]|3[0-1])\.',  # Private range 172.16.0.0/12
-            r'^https?://192\.168\.',              # Private range 192.168.0.0/16
-            r'^https?://127\.',                   # Loopback
-            r'^https?://169\.254\.',              # Link-local (AWS metadata)
-            r'^https?://localhost',               # Localhost
-            r'^https?://0\.0\.0\.0',              # All interfaces
-        ]
-
-        for pattern in private_patterns:
-            if re.match(pattern, v, re.IGNORECASE):
+        for pattern in _PRIVATE_PATTERNS:
+            if re.match(pattern, self.llm_base_url, re.IGNORECASE):
                 raise ValueError('Доступ к внутренним сетям запрещён из соображений безопасности')
 
-        return v
+        return self
+
+    @field_validator('log_level')
+    @classmethod
+    def validate_log_level(cls, v: str) -> str:
+        """Нормализует (upper) и проверяет уровень логирования."""
+        normalized = v.strip().upper()
+        if normalized not in _ALLOWED_LOG_LEVELS:
+            raise ValueError(
+                f'Недопустимый LOG_LEVEL: {v!r}. '
+                f'Допустимые: {", ".join(sorted(_ALLOWED_LOG_LEVELS))}'
+            )
+        return normalized
 
     @property
     def vk_group_id_int(self) -> int:

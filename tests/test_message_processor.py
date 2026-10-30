@@ -1,6 +1,7 @@
 """Тесты MessageProcessor: таймаут диалога (DIALOG_TIMEOUT_HOURS) и touch last_active."""
 
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, Mock
 
@@ -77,3 +78,69 @@ class TestPrepareDialogContext:
         assert result.state is None
         assert result.context == {}
         processor.dialog_service.register_dialog.assert_called_once_with(result)
+
+
+class _DelayedHandler:
+    """Стаб-обработчик: асинхронная задержка зависит от id сообщения."""
+
+    async def handle_async(self, message: Message, dialog: Dialog | None) -> str:
+        await asyncio.sleep(0.05 if message.id == 1 else 0.01)
+        return f'ответ-{message.id}'
+
+
+class _SlowFirstClassifier:
+    """Стаб-классификатора: первое сообщение обрабатывается медленно, второе быстро.
+
+    Без per-user сериализации второе сообщение финализируется раньше первого
+    и порядок истории перепутывается; с локом в MessageProcessor сохраняется
+    порядок подачи.
+    """
+
+    async def classify_async(self, message: Message) -> str:
+        await asyncio.sleep(0.05 if message.id == 1 else 0.01)
+        return f'intent-{message.id}'
+
+
+class TestSameUserSequentialProcessing:
+    """Обработка двух сообщений одного пользователя строго по порядку."""
+
+    @pytest.mark.asyncio
+    async def test_history_order_equals_submission_order(self):
+        """Быстрое второе сообщение не опережает медленное первое в истории."""
+        settings = Mock(spec=Settings)
+        settings.dialog_timeout_hours = 24
+
+        dialog_service = Mock()
+        dialog_service.max_history_messages = 10
+        dialog_service.get_dialog_async = AsyncMock(
+            return_value=Dialog(user_id=42, last_active=datetime.now())
+        )
+        dialog_service.add_message_async = AsyncMock()
+        dialog_service.save_dialog_async = AsyncMock()
+
+        message_service = Mock()
+        message_service.send = Mock(return_value=True)
+
+        processor = MessageProcessor(
+            dialog_service=dialog_service,
+            message_service=message_service,
+            router={f'intent-{i}': _DelayedHandler() for i in (1, 2)},
+            classifier=_SlowFirstClassifier(),
+            metrics=Mock(),
+            settings=settings,
+            logger=logging.getLogger('test'),
+        )
+
+        m1 = Message(id=1, user_id=42, text='первое', timestamp=datetime.now())
+        m2 = Message(id=2, user_id=42, text='второе', timestamp=datetime.now())
+
+        await asyncio.gather(processor.process(m1), processor.process(m2))
+
+        written = [(call.args[1], call.args[2])
+                   for call in dialog_service.add_message_async.call_args_list]
+        assert written == [
+            ('user', 'первое'),
+            ('bot', 'ответ-1'),
+            ('user', 'второе'),
+            ('bot', 'ответ-2'),
+        ]

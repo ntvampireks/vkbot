@@ -162,32 +162,43 @@ SQLite в `storage/dialogs.db`:
 
 ```python
 from bot.config import Settings
-from bot.utils.metrics import MetricsCollector
 from bot.core.vk_client import VKClient
 from bot.core.event_handler import EventHandler
 from bot.services.rate_limiter import RateLimiter
-from bot.utils.per_user_limiter import PerUserRateLimiter
 from bot.services.dialog_service import DialogService
 from bot.services.message_service import MessageService
 from bot.core.openai_client import OpenAIClient
 from bot.services.intent_classifier import IntentClassifier
-from bot.orchestration.router import create_router
+from bot.orchestration import create_router
 from bot.orchestration.message_processor import MessageProcessor
-import logging
+from bot.lifecycle import register_signal_handlers, start_health_server
+from bot import api
+from bot.utils.app_logger import get_logger
+from bot.utils.metrics import get_metrics
+from bot.utils.message_validator import has_mention, strip_mention
+from storage.db import init_db
+import asyncio
+import threading
 
-# 1. Создаём базовые компоненты
+# 1. Конфигурация и логирование (до первых логов)
 settings = Settings()
-logger = logging.getLogger('bot')
-metrics = MetricsCollector()
+logger = get_logger('bot', settings)
 
-# 2. Инициализируем клиенты и сервисы
+# 2. БД, метрики и health-сервер
+init_db()
+metrics = get_metrics()
+api.set_metrics(metrics)
+start_health_server(settings)
+
+# 3. Клиент VK, очередь и сервисы
 vk_client = VKClient(settings, logger)
 rate_limiter = RateLimiter()
-per_user_limiter = PerUserRateLimiter()
-dialog_service = DialogService(settings, logger)
 message_service = MessageService(vk_client, rate_limiter, settings, logger)
+message_service.start_processing()
+register_signal_handlers(vk_client, message_service)
+dialog_service = DialogService(settings, logger)
 
-# 3. Инициализация LLM клиента и классификатора
+# 4. LLM-клиент, роутер и классификатор
 llm_client = OpenAIClient(
     base_url=settings.llm_base_url,
     api_key=settings.llm_api_key,
@@ -197,7 +208,7 @@ llm_client = OpenAIClient(
 router = create_router(llm_client=llm_client)
 classifier = IntentClassifier(router=router, llm_client=llm_client)
 
-# 4. Создаём processor
+# 5. Оркестратор
 processor = MessageProcessor(
     dialog_service=dialog_service,
     message_service=message_service,
@@ -208,8 +219,26 @@ processor = MessageProcessor(
     logger=logger
 )
 
-# 5. Запускаем бота
-vk_client.run_forever(processor.process)
+# 6. Отдельный event loop в daemon-потоке для асинхронной обработки
+loop = asyncio.new_event_loop()
+threading.Thread(target=loop.run_forever, daemon=True).start()
+
+# 7. Колбэк on_message: проверка упоминания/вложений, запуск processor.process
+def on_message(message):
+    if not has_mention(message, settings):
+        return
+    message.text = strip_mention(message.text, settings)
+    if message.attachments:
+        message_service.send(message.peer_id or message.user_id,
+            'Извините, я пока не умею обрабатывать вложения...', reply_to=message.id)
+        return
+    future = asyncio.run_coroutine_threadsafe(processor.process(message), loop)
+    future.add_done_callback(_consume_future)  # _consume_future — локальный обработчик, см. main.py
+
+# 8. Обработчик событий
+bot_user_id = settings.vk_group_id_int
+event_handler = EventHandler(on_message, bot_user_id=bot_user_id, settings=settings, logger=logger)
+vk_client.run_forever(event_handler.handle_event)
 ```
 
 #### Зависимости по компонентам
@@ -277,40 +306,54 @@ processor = MessageProcessor(..., custom_service=my_new_service)
 
 ```
 tests/
-├── test_deduplication.py        # Тесты MessageDeduplicator (7 тестов)
-├── test_per_user_limiter.py     # Тесты PerUserRateLimiter (15 тестов)
-├── test_rate_limiter.py         # Тесты RateLimiter (5 тестов)
-├── test_dialog.py               # Тесты Dialog домена (14 тестов)
-├── test_message.py              # Тесты Message домена (4 теста)
-├── test_message_queue.py        # Тесты MessageQueue (10 тестов)
-├── test_message_sender.py       # Тесты MessageSender (10 тестов)
-├── test_message_validator.py    # Тесты валидации (37 тестов)
-├── test_intent_classifier.py    # Тесты классификатора (15 тестов)
-├── test_handlers.py             # Тесты обработчиков (9 тестов)
-└── test_router.py               # Тесты роутера (11 тестов)
+├── test_app_logger.py             # Тесты app_logger (3 теста)
+├── test_config.py                 # Тесты Settings / SSRF / валидации (19 тестов)
+├── test_db.py                     # Тесты storage.db CRUD (2 теста)
+├── test_deduplicator.py           # Тесты MessageDeduplicator (8 тестов)
+├── test_dialog.py                 # Тесты Dialog и Message доменов (21 тест)
+├── test_dialog_service.py         # Тесты DialogService (4 теста)
+├── test_event_handler.py          # Тесты EventHandler / фильтрации событий (5 тестов)
+├── test_handlers.py               # Тесты обработчиков (9 тестов)
+├── test_intent_classifier.py      # Тесты IntentClassifier (18 тестов)
+├── test_lifecycle.py              # Тесты lifecycle/shutdown (4 теста)
+├── test_message_processor.py      # Тесты MessageProcessor (3 теста)
+├── test_message_queue.py          # Тесты MessageQueue (10 тестов)
+├── test_message_sender.py         # Тесты MessageSender (12 тестов)
+├── test_message_validator.py      # Тесты валидации / prompt injection (69 тестов)
+├── test_metrics.py                # Тесты MetricsCollector (3 теста)
+├── test_per_user_limiter.py       # Тесты PerUserRateLimiter (15 тестов)
+├── test_rate_limiter.py           # Тесты RateLimiter (5 тестов)
+├── test_roll_dice_handler.py      # Тесты roll dice handler (6 тестов)
+├── test_router.py                 # Тесты router (10 тестов)
+└── test_vk_client.py              # Тесты VKClient (8 тестов)
 ```
 
 ### Покрытие тестами
 
 | Модуль | Статус | Примечание |
 |--------|--------|------------|
-| `MessageDeduplicator` | ✅ | 7 тестов |
+| `MessageDeduplicator` | ✅ | 8 тестов |
 | `PerUserRateLimiter` | ✅ | 15 тестов, включая потокобезопасность |
 | `RateLimiter` | ✅ | 5 тестов |
-| `Dialog` | ✅ | 14 тестов, включая concurrent access |
-| `Message` | ✅ | 4 теста |
+| `Dialog` | ✅ | 21 тест, включая concurrent access |
+| `Message` | ✅ | Тесты в `test_dialog.py` |
 | `MessageQueue` | ✅ | 10 тестов |
-| `MessageSender` | ✅ | 10 тестов |
-| `message_validator` | ✅ | 37 тестов, включая prompt injection |
-| `IntentClassifier` | ✅ | 15 тестов с моками LLM |
+| `MessageSender` | ✅ | 12 тестов |
+| `message_validator` | ✅ | 69 тестов, включая prompt injection |
+| `IntentClassifier` | ✅ | 18 тестов с моками LLM |
 | `Handlers` | ✅ | 9 тестов |
-| `router` | ✅ | 11 тестов |
-| `VKClient` | ❌ | Критический gap — нет тестов |
-| `EventHandler` | ❌ | Критический gap — нет тестов |
-| `MessageProcessor` | ❌ | Критический gap — нет тестов |
-| `DialogService` | ❌ | Нет тестов с реальной БД |
-| `storage.db` | ❌ | Нет тестов CRUD операций |
-| `OpenAIClient` | ❌ | Нет тестов |
+| `router` | ✅ | 10 тестов |
+| `VKClient` | ✅ | 8 тестов |
+| `EventHandler` | ✅ | 5 тестов |
+| `MessageProcessor` | ✅ | 3 теста |
+| `DialogService` | ✅ | 4 теста (моки БД) |
+| `storage.db` | ✅ | 2 теста CRUD |
+| `config` | ✅ | 19 тестов (SSRF/валидация) |
+| `app_logger` | ✅ | 3 теста |
+| `metrics` | ✅ | 3 теста |
+| `lifecycle` | ✅ | 4 теста |
+| `roll_dice_handler` | ✅ | 6 тестов (включая fallback без LLM) |
+| `OpenAIClient` | ❌ | Нет dedicated-тестов (LLM мокается в `test_intent_classifier`) |
 
 ### Рекомендации по тестированию
 
@@ -318,7 +361,7 @@ tests/
    - `test_vk_client.py` — VK API клиент с моками
    - `test_event_handler.py` — фильтрация событий
    - `test_message_processor.py` — интеграционные тесты полного потока
-   - `tests/storage/test_db.py` — тесты SQLite с временной БД
+   - `tests/test_db.py` — тесты SQLite с временной БД
 
 2. **Интеграционные тесты** — тестировать взаимодействие компонентов:
    - Полный поток от получения сообщения до отправки ответа
@@ -365,7 +408,7 @@ tests/
 | `messages_sent_total` | Всего отправлено сообщений |
 | `message_errors_total` | Ошибки при обработке |
 | `message_processing_seconds` | Время обработки сообщения |
-| `response_send_seconds_current` | Время отправки ответа |
+| `response_send_seconds` | Время отправки ответа |
 | `uptime_seconds` | Время работы бота |
 
 ### Доступные endpoints
@@ -390,68 +433,6 @@ tests/
 
 ## Поведенческие руководства (из AGENTS.md)
 
-Руководства по поведению для снижения распространённых ошибок LLM при написании кода.
-
-**Компромисс:** Эти руководства склоняются к осторожности, а не к скорости. Для тривиальных задач используйте суждение.
-
-### 1. Думайте перед кодированием
-
-**Не предполагайте. Не скрывайте путаницу. Выявляйте компромиссы.**
-
-Перед реализацией:
-- Явно сформулируйте свои предположения. Если не уверены — спросите.
-- Если существует несколько интерпретаций — представьте их, не выбирайте молча.
-- Если существует более простой подход — скажите об этом. Возразите, когда это оправдано.
-- Если что-то непонятно — остановитесь. Назовите, что именно непонятно. Спросите.
-
-### 2. Простота прежде всего
-
-**Минимальный код, решающий проблему. Ничего спекулятивного.**
-
-- Никаких функций beyond того, что было запрошено.
-- Никаких абстракций для однократного использования кода.
-- Никакой «гибкости» или «настраиваемости», которая не была запрошена.
-- Никакой обработки ошибок для невозможных сценариев.
-- Если вы пишете 200 строк, а могло быть 50 — переписывайте.
-
-Спросите себя: «Сказал бы старший инженер, что это излишне усложнено?» Если да — упрощайте.
-
-### 3. Хирургические изменения
-
-**Касайтесь только того, что необходимо. Чистите только свой собственный беспорядок.**
-
-При редактировании существующего кода:
-- Не «улучшайте» соседний код, комментарии или форматирование.
-- Не рефакторьте вещи, которые не сломаны.
-- Соответствуйте существующему стилю, даже если вы сделали бы это иначе.
-- Если вы заметили несоответствующий мёртвый код — упомяните его, не удаляйте.
-
-Когда ваши изменения создают «сирот»:
-- Удаляйте импорты/переменные/функции, которые ВЫ сделали неиспользуемыми.
-- Не удаляйте существующий мёртвый код, если не просили.
-
-Тест: Каждая изменённая строка должна напрямую восходить к запросу пользователя.
-
-### 4. Исполнение, ориентированное на цель
-
-**Определяйте критерии успеха. Циклируйте до проверки.**
-
-Преобразуйте задачи в проверяемые цели:
-- «Добавить валидацию» → «Написать тесты для невалидных входов, затем заставить их пройти»
-- «Исправить баг» → «Написать тест, воспроизводящий его, затем заставить его пройти»
-- «Рефакторить X» → «Убедиться, что тесты проходят до и после»
-
-Для многошаговых задач сформулируйте краткий план:
-```
-1. [Шаг] → проверить: [контроль]
-2. [Шаг] → проверить: [контроль]
-3. [Шаг] → проверить: [контроль]
-```
-
-Сильные критерии успеха позволяют вам циклировать независимо. Слабые критерии («сделать работающим») требуют постоянной обратной связи.
-
----
-
-**Эти руководства работают, если:** меньше ненужных изменений в диффах, меньше переписываний из-за излишнего усложнения, и уточняющие вопросы приходят до реализации, а не после ошибок.
-
-**ВСЕГДА ВЕДИ ДИАЛОГ НА РУССКОМ**
+Руководства по поведению (думать перед кодированием, простота, хирургические правки,
+цель-ориентированное исполнение) размещены в [AGENTS.md](AGENTS.md) — единый источник
+истины. Ниже они не дублируются.

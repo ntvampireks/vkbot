@@ -369,6 +369,8 @@ vk-bot/
 │   │   ├── base_handler.py     # Базовый класс обработчика
 │   │   ├── greeting_handler.py # Приветствие
 │   │   ├── help_handler.py     # Справка
+│   │   ├── roll_dice_handler.py# Бросок кубика (d4–d100)
+│   │   ├── throw_dice_handler.py# Точность броска vs результат
 │   │   └── default_handler.py  # Ответ на неизвестные запросы
 │   ├── orchestration/          # Модули оркестрации
 │   │   ├── router.py           # Автоматическая регистрация хендлеров

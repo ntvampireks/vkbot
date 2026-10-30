@@ -154,6 +154,41 @@ class TestMessage:
         message = Message.from_vk_event(event_data)
         assert message.timestamp == ts
 
+    def test_from_vk_event_missing_message_id_rejected(self):
+        with pytest.raises(ValueError):
+            Message.from_vk_event({
+                "user_id": 999, "text": "привет", "timestamp": 1699900000,
+                "peer_id": 100, "attachments": [], "out": 0
+            })
+
+    def test_from_vk_event_zero_message_id_rejected(self):
+        with pytest.raises(ValueError):
+            Message.from_vk_event({
+                "message_id": 0, "user_id": 999, "text": "привет",
+                "timestamp": 1699900000, "peer_id": 100, "attachments": [], "out": 0
+            })
+
+    def test_from_vk_event_user_id_falls_back_to_peer_id(self):
+        message = Message.from_vk_event({
+            "message_id": 42, "text": "привет", "timestamp": 1699900000,
+            "peer_id": 100, "attachments": [], "out": 0
+        })
+        assert message.user_id == 100
+
+    def test_from_vk_event_missing_timestamp_rejected(self):
+        with pytest.raises(ValueError):
+            Message.from_vk_event({
+                "message_id": 42, "user_id": 999, "text": "привет",
+                "peer_id": 100, "attachments": [], "out": 0
+            })
+
+    def test_from_vk_event_epoch_timestamp_rejected(self):
+        with pytest.raises(ValueError):
+            Message.from_vk_event({
+                "message_id": 42, "user_id": 999, "text": "привет",
+                "timestamp": 0, "peer_id": 100, "attachments": [], "out": 0
+            })
+
 
 class TestDialogThreadSafety:
     """Тесты на потокобезопасность Dialog."""

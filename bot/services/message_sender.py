@@ -68,21 +68,34 @@ class MessageSender:
             self._worker_thread.join(timeout=timeout)
 
         if self._worker_thread and self._worker_thread.is_alive():
-            self._logger.warning('Таймаут ожидания остановки MessageSender')
+            self._logger.warning(
+                f'Таймаут ожидания остановки MessageSender, '
+                f'не обработано сообщений: {self.queue.qsize()}'
+            )
         else:
             self._logger.info('MessageSender остановлен')
 
     def _process(self) -> None:
-        """Цикл обработки очереди отправки."""
-        while self._running:
+        """Цикл обработки очереди отправки.
+
+        После остановки дренирует остаток: выход только когда очередь пуста
+        (get-таймаут) и выставлен флаг остановки.
+        """
+        while True:
             message = self.queue.get(timeout=1.0)
             if message is None:
+                # Очередь пуста — завершаемся только по команде остановки.
+                if not self._running:
+                    break
                 continue
 
             try:
                 self._send_with_retry(message)
             except Exception as e:
-                self._logger.error(f'Не удалось отправить сообщение для peer_id={message.peer_id} после {self.max_retries} попыток: {e}')
+                self._logger.error(
+                    f'Не удалось отправить сообщение для peer_id={message.peer_id} '
+                    f'после {self.max_retries} попыток: {e}'
+                )
             finally:
                 self.queue.mark_done(message)
 

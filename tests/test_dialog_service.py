@@ -70,3 +70,23 @@ class TestAddMessageAsync:
 
         db.add_message.assert_awaited_once_with(1, 'user', 'привет', 10)
         assert service._dialogs[1][0].history[0]['text'] == 'привет'
+
+class TestGetDialogHistoryLimit:
+    """Лимит истории при кэш-промахе берётся из настроек, а не по умолчанию."""
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_loads_history_with_configured_limit(self):
+        """Кэш-промах: get_messages вызывается с max_history_messages (не 10 по умолчанию)."""
+        service = _create_service()
+        service.max_history_messages = 25
+
+        with patch('bot.services.dialog_service.db') as db:
+            db.get_dialog = AsyncMock(return_value={
+                'user_id': 2, 'last_active': datetime.now(),
+                'state': None, 'context': None,
+            })
+            db.get_messages = AsyncMock(return_value=[])
+
+            await service.get_dialog_async(2)
+
+        db.get_messages.assert_awaited_once_with(2, 25)

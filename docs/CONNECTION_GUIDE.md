@@ -147,7 +147,7 @@ python -m bot.main
 # Путь к каталогу логов
 LOG_DIR=logs
 
-# Уровень логирования (DEBUG, INFO, WARNING, ERROR)
+# Уровень логирования (DEBUG, INFO, WARNING, ERROR, CRITICAL)
 LOG_LEVEL=DEBUG
 ```
 
@@ -179,8 +179,8 @@ MESSAGE_RETRY_DELAY=1.0
 # Таймаут VK API запросов (секунды)
 MESSAGE_API_TIMEOUT=5
 
-# Максимальная длина сообщения
-MAX_MESSAGE_LENGTH=10000
+# Максимальная длина сообщения (лимит VK API — 4096)
+MAX_MESSAGE_LENGTH=4096
 ```
 
 ---

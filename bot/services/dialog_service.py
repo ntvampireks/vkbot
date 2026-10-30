@@ -107,7 +107,7 @@ class DialogService:
             last_active=data['last_active'],
             state=data['state'],
             context=data['context'],
-            history=await db.get_messages(user_id),
+            history=await db.get_messages(user_id, self.max_history_messages),
             max_history_messages=self.max_history_messages
         )
 

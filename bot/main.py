@@ -90,17 +90,14 @@ def main() -> None:
     logger.info('Бот запущен...')
 
     def _consume_future(fut):
-        """Потребляет исключение из фоновой задачи, чтобы оно не потерялось.
+        """Помечает исключение фоновой задачи как «полученное».
 
-        MessageProcessor.process уже логирует ошибку с traceback и считает
-        метрику; здесь мы лишь помечаем исключение как «полученное» (иначе
-        asyncio в конце выводит 'Task exception was never retrieved') и
-        фиксируем сам факт падения фоновой задачи.
+        Ошибка и traceback уже логируются в MessageProcessor.process
+        (там же считаются метрики); здесь мы лишь потребляем исключение,
+        чтобы asyncio не вывел 'Task exception was never retrieved'.
         """
         try:
-            exc = fut.exception()
-            if exc is not None:
-                logger.error(f'Фоновая обработка сообщения завершилась ошибкой: {exc!r}')
+            fut.exception()  # результат не нужен — ошибка уже обработана
         except Exception:
             # Задача отменена (CancelledError) или loop остановлен — не пробрасываем
             pass

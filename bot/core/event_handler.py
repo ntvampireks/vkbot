@@ -66,6 +66,11 @@ class EventHandler:
         if event_type != VkEventType.MESSAGE_NEW:
             return
 
+        # Пропускаем собственные исходящие события до всех проверок/лимитеров
+        if event.get("out", 0) == 1:
+            self._logger.debug(f'Исходящее сообщение {event.get("message_id")}, пропускаем')
+            return
+
         message_id = event.get("message_id", 0)
         peer_id = event.get("peer_id", 0)
         author_id = event.get("author_id")
@@ -95,11 +100,6 @@ class EventHandler:
 
         try:
             message = Message.from_vk_event(event)
-
-            # Дополнительная проверка: исходящие сообщения
-            if message.out == 1:
-                self._logger.debug(f'Исходящее сообщение {message_id}, пропускаем')
-                return
 
             # Валидация и санитизация текста
             try:

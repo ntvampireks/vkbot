@@ -1,5 +1,6 @@
 """Обработка сообщений."""
 
+import asyncio
 import time
 import traceback
 import logging
@@ -11,6 +12,8 @@ from bot.services.dialog_service import DialogService
 from bot.services.message_service import MessageService
 from bot.services.intent_classifier import IntentClassifier
 
+
+_USER_LOCK_SLOTS = 4096  # >> числа одновременно активных диалогов; пул локов без роста памяти
 
 class MessageProcessor:
     """Оркестратор обработки сообщений.
@@ -49,6 +52,7 @@ class MessageProcessor:
         self.classifier = classifier
         self.metrics = metrics
         self._settings = settings
+        self._user_locks: list[asyncio.Lock] = [asyncio.Lock() for _ in range(_USER_LOCK_SLOTS)]
         self._logger = logger or logging.getLogger(__name__)
 
     async def process(self, message: Message) -> None:
@@ -57,22 +61,29 @@ class MessageProcessor:
         Args:
             message: Входящее сообщение
         """
-        self.metrics.record_message_received()
+        # Per-user asyncio.Lock: сообщения одного пользователя обрабатываются строго
+        # последовательно. Без этого await-точки разных задач переплетаются и история
+        # в БД/кэше теряет порядок (user1, user2, bot1, bot2), искажая контекст LLM.
+        # Пул локов без словаря — нет утечки памяти; редкие коллизии разных юзеров
+        # лишь немного увеличивают задержку.
+        lock = self._user_locks[message.user_id % len(self._user_locks)]
+        async with lock:
+            self.metrics.record_message_received()
 
-        start_time = time.time()
-        try:
-            dialog = await self._prepare_dialog_context(message)
-            response = await self._handle_message(message, dialog)
+            start_time = time.time()
+            try:
+                dialog = await self._prepare_dialog_context(message)
+                response = await self._handle_message(message, dialog)
 
-            if self._send_response(message, response):
-                self.metrics.inc_counter('messages_sent_total')
+                if self._send_response(message, response):
+                    self.metrics.inc_counter('messages_sent_total')
 
-            await self._finalize_message(message, dialog, response)
-            self.metrics.record_processing_time(time.time() - start_time)
-        except Exception:
-            self._logger.error(f'Ошибка обработки сообщения:\n{traceback.format_exc()}')
-            self.metrics.record_message_error()
-            raise
+                await self._finalize_message(message, dialog, response)
+                self.metrics.record_processing_time(time.time() - start_time)
+            except Exception:
+                self._logger.error(f'Ошибка обработки сообщения:\n{traceback.format_exc()}')
+                self.metrics.record_message_error()
+                raise
 
     async def _prepare_dialog_context(self, message: Message) -> Dialog:
         """Получить или создать диалог для пользователя."""

@@ -30,7 +30,6 @@ def graceful_shutdown(vk_client: VKClient | None, message_service: MessageServic
     if message_service:
         try:
             message_service.stop(timeout=5.0)
-            logger.info('Очередь сообщений обработана')
         except Exception as e:
             logger.error(f'Ошибка остановки MessageService: {e}')
 

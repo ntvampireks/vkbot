@@ -68,3 +68,20 @@ def test_llm_allow_private_true_still_validates_scheme():
 ])
 def test_vk_group_id_int_normalizes_sign(raw, expected):
     assert make_settings(vk_group_id=raw).vk_group_id_int == expected
+
+
+@pytest.mark.parametrize('bad_log_level', ['NOT_A_LEVEL', 'verbose', ''])
+def test_invalid_log_level_rejected(bad_log_level):
+    with pytest.raises(ValidationError):
+        make_settings(log_level=bad_log_level)
+
+
+@pytest.mark.parametrize('raw,expected', [
+    ('INFO', 'INFO'),
+    ('info', 'INFO'),
+    ('INFo', 'INFO'),
+    ('  warning  ', 'WARNING'),
+    ('critical', 'CRITICAL'),
+])
+def test_log_level_normalized_to_upper(raw, expected):
+    assert make_settings(log_level=raw).log_level == expected

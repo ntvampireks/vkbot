@@ -126,6 +126,28 @@ class TestMessageSender:
         # Ошибка должна была быть залогирована, но не должна заблокировать поток
 
 
+    def test_stop_drains_remaining_queue(self):
+        """Грациозная остановка не теряет поставленные сообщения."""
+        vk_client = Mock()
+        rate_limiter = RateLimiter()
+        queue = MessageQueue()
+        settings = _create_mock_settings()
+
+        sender = MessageSender(
+            vk_client=vk_client,
+            rate_limiter=rate_limiter,
+            queue=queue,
+            settings=settings,
+            max_retries=3
+        )
+        sender.start()
+        queue.put(123, 'msg1')
+        queue.put(124, 'msg2')
+        # Остановка сразу, пока оба сообщения ещё в очереди/обрабатываются
+        sender.stop(timeout=5.0)
+
+        assert vk_client.send_message.call_count == 2
+
 class TestMessageSenderRetryLogic:
     """Тесты для retry-логики MessageSender."""
 

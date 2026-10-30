@@ -13,7 +13,7 @@ DB_PATH = Path(__file__).parent / 'dialogs.db'
 async def _trim_old_messages(conn: aiosqlite.Connection, user_id: int, max_messages: int) -> None:
     """Удалить старые сообщения, оставив только последние max_messages."""
     cursor = await conn.execute(
-        'SELECT id FROM messages WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?',
+        'SELECT id FROM messages WHERE user_id = ? ORDER BY id DESC LIMIT ?',
         (user_id, max_messages)
     )
     kept_ids = [row[0] for row in await cursor.fetchall()]
